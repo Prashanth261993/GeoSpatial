@@ -33,6 +33,11 @@ The OSRM routing graph in `data/osrm/` is on disk and unaffected by any of these
 See [SPEC.md](SPEC.md) for architecture and [docs/adr](docs/adr) for decisions.
 Roadmap and phase status: [ROADMAP.md](ROADMAP.md).
 
+## Build journey (landing site)
+A cinematic Astro site narrates how this was built, phase by phase — diagrams, key
+code, screenshots, and GIFs of the live UI. Source in [`docs-site/`](docs-site).
+Live: **https://prashanth261993.github.io/GeoSpatial/**
+
 ## MapTiler key (dark vector basemap)
 Without a key the map uses a plain MapLibre demotiles fallback. For the dark
 Seattle look:

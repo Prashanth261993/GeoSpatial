@@ -1,0 +1,131 @@
+---
+const base = import.meta.env.BASE_URL;
+
+const mermaid = `flowchart LR
+  S["simulator<br/>200 cars"] -->|"HTTP POST /loc"| I["ingest-gateway<br/>validate"]
+  I -->|"GEOADD"| R[("Redis<br/>GEO + pub/sub")]
+  I -->|"PUBLISH positions"| R
+  R -->|"SUBSCRIBE"| F["ws-fanout<br/>hub: N sockets"]
+  F -->|"WebSocket"| W["browser<br/>deck.gl"]`;
+
+const codeIngest = `<span class="cm">// One handler: validate, then two writes — state + event.</span>
+<span class="kw">if</span> err := rdb.GeoAdd(c, <span class="st">"drivers"</span>, &redis.GeoLocation{
+    Name: p.ID, Latitude: p.Lat, Longitude: p.Lng,
+}).Err(); err != nil { http.Error(w, <span class="st">"geoadd"</span>, <span class="fn">500</span>); <span class="kw">return</span> }
+b, _ := json.Marshal(p)
+rdb.<span class="fn">Publish</span>(c, <span class="st">"positions"</span>, b)  <span class="cm">// fire-and-forget bus</span>`;
+
+const codeFanout = `<span class="kw">func</span> (h *hub) <span class="fn">broadcast</span>(b []<span class="kw">byte</span>) {
+    h.mu.RLock()
+    <span class="kw">for</span> ch := <span class="kw">range</span> h.clients {
+        <span class="kw">select</span> {
+        <span class="kw">case</span> ch &lt;- b:   <span class="cm">// fits in buffer -> keep</span>
+        <span class="kw">default</span>:        <span class="cm">// full -> DROP, never block others</span>
+        }
+    }
+    h.mu.RUnlock()
+}`;
+
+const codeInterp = `<span class="kw">const</span> a = Math.min(<span class="fn">1</span>, (now - t.t0) / (t.t1 - t.t0)); <span class="cm">// 0..1 over the tick</span>
+<span class="kw">return</span> [t.fromLng + (t.toLng - t.fromLng) * a,
+        t.fromLat + (t.toLat - t.fromLat) * a];       <span class="cm">// glide, not teleport</span>`;
+---
+<section id="phase-1" class="chapter">
+  <div class="wrap">
+    <div class="reveal">
+      <span class="tag">PHASE 01 · VERTICAL SLICE</span>
+      <h2>Moving dots, end to end</h2>
+      <p class="sub">The thinnest path that proves the whole architecture: a car moves → the server learns its new position → every browser sees it glide, in real time, on a dark live map of Seattle.</p>
+    </div>
+
+    <figure class="figure reveal">
+      <img src={`${base}/img/phase1/live-map.gif`} alt="Live map of 200 simulated Seattle drivers moving in real time" loading="lazy" />
+      <figcaption>200 simulated drivers, road-snapped via OSRM, streamed over WebSocket and rendered on the GPU with deck.gl. ~1 update/sec/driver on the wire; 60fps on screen via client-side interpolation.</figcaption>
+    </figure>
+
+    <div class="prose reveal">
+      <div class="h3">The problem</div>
+      <p>Every system like this — Uber, DoorDash, Flighty — is the same loop: <b>ingest → index → match → fan-out → analyze</b>. Before any of the hard parts, you need a spine: a way to get a position from a device to a screen, fast and smoothly. Phase 1 builds exactly that spine and nothing more.</p>
+
+      <div class="h3">The architecture</div>
+      <p>Four small Go/TS services and Redis. Producers are dumb and stateless (HTTP in); the server pushes to browsers (WebSocket out); Redis both stores the latest position and acts as the message bus.</p>
+    </div>
+
+    <pre class="mermaid reveal" set:html={mermaid}></pre>
+
+    <div class="prose reveal">
+      <div class="h3">Why HTTP in, WebSocket out</div>
+      <p>A driver's phone is a <em>producer</em>: connect, send, forget. HTTP is stateless, so any gateway instance can serve any request and load-balancers stay simple. WebSockets only earn their cost on the <em>fan-out</em> side, where the server must push to many browsers at once. Kafka is intentionally <em>not</em> here yet — it arrives in Phase 4 when we need partitioning and replay.</p>
+
+      <div class="h3">The 2D→1D trick</div>
+      <p>"Find everyone within 2km" is slow if you scan every driver. Computers index 1-D well, not 2-D — so Redis <code>GEOADD</code> interleaves lat/lng bits into a single geohash score in a sorted set. A radius query becomes a range scan: <code>O(log N + k)</code> instead of <code>O(N)</code>. Phase 2 swaps this for H3 hexagons, but GEO ships value today.</p>
+    </div>
+
+    <div class="code reveal">
+      <div class="bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="lang">services/ingest-gateway/main.go</span></div>
+      <pre><code set:html={codeIngest}></code></pre>
+    </div>
+
+    <div class="prose reveal">
+      <div class="h3">Fan-out with backpressure</div>
+      <p>One Redis subscriber feeds N browser sockets. The danger: one slow tab stalls everyone. The fix is a bounded per-client channel that <b>drops stale frames on overflow</b> — positions are "latest wins", so dropping is correct, and no single client can apply backpressure to the hub.</p>
+    </div>
+
+    <div class="code reveal">
+      <div class="bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="lang">services/ws-fanout/main.go</span></div>
+      <pre><code set:html={codeFanout}></code></pre>
+    </div>
+
+    <div class="prose reveal">
+      <div class="h3">The frontend flex: sparse server, smooth client</div>
+      <p>The wire carries ~1 update/sec/driver — cheap. A naive UI would teleport dots once a second. Instead the client stores <code>from → to</code> with timestamps and <b>interpolates</b> every animation frame, decoupling the 60fps render loop from the network rate. deck.gl draws on the GPU, so 200 — or 100,000 — points stay smooth.</p>
+    </div>
+
+    <div class="code reveal">
+      <div class="bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="lang">web/src/App.tsx</span></div>
+      <pre><code set:html={codeInterp}></code></pre>
+    </div>
+
+    <div class="prose reveal">
+      <div class="h3">Real roads, not straight lines</div>
+      <p>Straight-line wander reads as fake — dots drift into Elliott Bay. We preprocess a Washington OpenStreetMap extract with OSRM (<code>extract → partition → customize</code>) and have each simulated car request a real route, then walk the polyline ~80m per tick. If OSRM is down, the simulator falls back to straight-line motion so the system never stalls.</p>
+    </div>
+
+    <figure class="figure reveal">
+      <img src={`${base}/img/phase1/hero.png`} alt="Dark MapTiler basemap with cyan driver dots over Seattle" loading="lazy" />
+      <figcaption>Drivers stay on the road network and on land — OSRM road-snapping in action over the dark MapTiler vector basemap.</figcaption>
+    </figure>
+
+    <div class="reveal">
+      <div class="h3">Tradeoffs</div>
+      <table class="tbl">
+        <thead><tr><th>Decision</th><th>Chose</th><th>Rejected</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td>Ingest transport</td><td class="pick">HTTP</td><td class="drop">WS / Kafka</td><td>stateless, smallest slice</td></tr>
+          <tr><td>Live store</td><td class="pick">Redis GEO</td><td class="drop">Postgres</td><td>microsecond reads, volatile OK</td></tr>
+          <tr><td>Message bus</td><td class="pick">Redis pub/sub</td><td class="drop">Redpanda</td><td>no replay needed yet (P4)</td></tr>
+          <tr><td>Smoothness</td><td class="pick">client interpolation</td><td class="drop">faster server ticks</td><td>cheap bandwidth, 60fps</td></tr>
+          <tr><td>Movement</td><td class="pick">OSRM + fallback</td><td class="drop">straight-line only</td><td>realism + resilience</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout reveal"><b>A bug worth remembering:</b> a missing <code>main.tsx</code> made Vite serve a 404 and a blank page while every container reported healthy. A green stack can still serve a broken app — always verify the actual rendered page, not just process health.</div>
+
+    <div class="reveal">
+      <div class="h3">Interview talking points</div>
+      <div class="chips">
+        <div class="chip">Stateless HTTP in, WebSocket out: cheap producers, push fan-out.</div>
+        <div class="chip">2D→1D geohash turns radius queries into range scans, not table scans.</div>
+        <div class="chip">Sparse server + client interpolation = 60fps on ~1Hz data, tiny bandwidth.</div>
+        <div class="chip">Per-client buffered channels with drop-on-overflow = bounded backpressure.</div>
+        <div class="chip">Pub/sub now, Kafka later — the HTTP boundary never moves; only the bus does.</div>
+      </div>
+    </div>
+
+    <div class="prose reveal">
+      <div class="h3">What's next</div>
+      <p><b>Phase 2 — H3 indexing.</b> We replace raw Redis GEO with Uber's H3 hex grid: equal-area cells, clean k-ring neighbor math, and — crucially — a spatial key we'll later use to <em>partition</em> the event stream. "Who's near me" gets faster and becomes the foundation for matching and surge.</p>
+    </div>
+  </div>
+</section>

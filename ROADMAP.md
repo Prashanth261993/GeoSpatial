@@ -18,3 +18,7 @@
 
 Architecture: Go microservices · Redpanda · Redis · TimescaleDB · OSRM · React/deck.gl (Rust later).
 Domain: Seattle rideshare. See SPEC.md and docs/adr.
+
+Build journey (public): a cinematic Astro landing site in `docs-site/` narrates each
+phase with diagrams, code, screenshots and GIFs. Deployed to GitHub Pages:
+https://prashanth261993.github.io/GeoSpatial/

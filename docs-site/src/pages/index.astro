@@ -1,0 +1,60 @@
+---
+import Base from "../layouts/Base.astro";
+import Phase01 from "../components/Phase01.astro";
+
+const roadmap = [
+  { n: "00", t: "Skeleton & infra", s: "done" },
+  { n: "01", t: "Ingest + live map", s: "done" },
+  { n: "02", t: "H3 indexing", s: "next" },
+  { n: "03", t: "Matching engine", s: "todo" },
+  { n: "04", t: "Redpanda backbone", s: "todo" },
+  { n: "05", t: "Surge analytics", s: "todo" },
+  { n: "06", t: "Cloud + CDN", s: "todo" },
+  { n: "07", t: "Real-feed toggle", s: "todo" },
+  { n: "08", t: "Observability", s: "todo" },
+  { n: "09", t: "Rust hot path", s: "todo" },
+  { n: "10", t: "Cinematic frontend", s: "todo" },
+];
+const label = { done: "Shipped", next: "In progress", todo: "Planned" };
+---
+
+<Base>
+  <header class="hero">
+    <div class="wrap">
+      <span class="eyebrow reveal in">Real-time distributed systems · Built in the open</span>
+      <h1 class="reveal in">Tracking a city in motion.<br /><span class="grad">One vertical slice at a time.</span></h1>
+      <p class="lede reveal in">A flagship engineering journey: ingest thousands of moving entities, index them spatially with H3, and match supply to demand in real time — on a live GPU map. Go · Redpanda · Redis · deck.gl.</p>
+      <div class="cta reveal in">
+        <a class="btn primary" href="#phase-1">Read the build →</a>
+        <a class="btn" href="https://github.com/Prashanth261993/GeoSpatial">View source</a>
+      </div>
+
+      <div class="stats">
+        <div class="stat reveal"><div class="n">200+</div><div class="l">moving entities streamed live</div></div>
+        <div class="stat reveal"><div class="n">~1Hz→60fps</div><div class="l">sparse server, smooth client</div></div>
+        <div class="stat reveal"><div class="n">5</div><div class="l">services, fully containerized</div></div>
+        <div class="stat reveal"><div class="n">100%</div><div class="l">free: local + cloud tiers</div></div>
+      </div>
+    </div>
+  </header>
+
+  <section id="roadmap">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <div class="kicker">The plan</div>
+        <h2>Eleven phases, each a working slice</h2>
+      </div>
+      <div class="roadmap reveal">
+        {roadmap.map((p) => (
+          <div class={`rm ${p.s}`}>
+            <div class="ph">PHASE {p.n}</div>
+            <div class="t">{p.t}</div>
+            <div class="st"><span class="pip"></span>{label[p.s as keyof typeof label]}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <Phase01 />
+</Base>

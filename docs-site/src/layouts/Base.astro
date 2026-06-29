@@ -1,0 +1,71 @@
+---
+import "../styles/global.css";
+const { title = "Building a Real-Time Geospatial Platform", description = "A Staff-level engineering journey: tracking, indexing, and matching thousands of moving entities in real time." } = Astro.props;
+const base = import.meta.env.BASE_URL;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={`${base}/img/phase1/hero.png`} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <div class="bg-fx" aria-hidden="true"></div>
+
+    <nav class="top">
+      <div class="wrap">
+        <a class="brand" href={base}><span class="dot"></span> Geospatial Platform</a>
+        <div class="links">
+          <a href="#roadmap">Roadmap</a>
+          <a href="#phase-1">Phase 1</a>
+          <a href="https://github.com/Prashanth261993/GeoSpatial">GitHub</a>
+        </div>
+      </div>
+    </nav>
+
+    <slot />
+
+    <footer>
+      <div class="wrap">
+        <div>Built in the open — one vertical slice per phase. © 2026</div>
+        <div><a href="https://github.com/Prashanth261993/GeoSpatial">Prashanth261993/GeoSpatial</a></div>
+      </div>
+    </footer>
+
+    <!-- Mermaid: dark themed diagrams -->
+    <script is:inline type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "base",
+        themeVariables: {
+          background: "#0d1119",
+          primaryColor: "#10151f",
+          primaryBorderColor: "#2a3346",
+          primaryTextColor: "#cdd6f4",
+          lineColor: "#89dceb",
+          fontFamily: "ui-monospace, monospace",
+          fontSize: "14px",
+        },
+      });
+    </script>
+
+    <!-- Scroll reveal -->
+    <script is:inline>
+      const io = new IntersectionObserver((es) => {
+        es.forEach((e) => { if (e.isIntersecting) e.target.classList.add("in"); });
+      }, { threshold: 0.12 });
+      document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
+    </script>
+  </body>
+</html>
