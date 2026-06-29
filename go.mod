@@ -1,10 +1,11 @@
 module github.com/Prashanth261993/geospatial
 
-go 1.23
+go 1.24
 
 require (
 	github.com/coder/websocket v1.8.12
 	github.com/redis/go-redis/v9 v9.6.1
+	github.com/uber/h3-go/v4 v4.5.0
 )
 
 require (

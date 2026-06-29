@@ -76,6 +76,19 @@ services:
     depends_on:
       redis: { condition: service_healthy }
 
+  indexer:
+    build:
+      context: .
+      dockerfile: services/Dockerfile.cgo
+      args: { SVC: indexer }
+    environment:
+      REDIS_ADDR: redis:6379
+      PORT: "8100"
+      H3_RES: "9"
+    ports: ["8100:8100"]
+    depends_on:
+      redis: { condition: service_healthy }
+
   simulator:
     build:
       context: .
@@ -93,6 +106,7 @@ services:
     environment:
       VITE_MAPTILER_KEY: ${VITE_MAPTILER_KEY:-}
       VITE_WS_URL: ${VITE_WS_URL:-ws://localhost:8090/ws}
+      VITE_NEARBY_URL: ${VITE_NEARBY_URL:-http://localhost:8100/nearby}
     ports: ["5173:5173"]
     depends_on: [ws-fanout]
 

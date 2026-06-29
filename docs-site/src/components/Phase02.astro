@@ -1,0 +1,111 @@
+---
+const base = import.meta.env.BASE_URL;
+
+const mermaid = `flowchart LR
+  P["positions<br/>stream"] --> IX["indexer"]
+  IX -->|"SADD h3:cell id"| R[("Redis<br/>Set per cell")]
+  Q["GET /nearby<br/>lat,lng,radius"] --> IX
+  IX -->|"gridDisk → cells"| BP["broad phase<br/>candidates"]
+  BP -->|"exact distance"| NP["narrow phase<br/>matches"]`;
+
+const codeQuery = `<span class="cm">// broad phase: hex cells covering the radius</span>
+center := h3.LatLngToCell(LatLng{lat, lng}, res)
+k      := ceil(radius / hexEdgeLength(res))
+cells  := h3.GridDisk(center, k)
+candidates := union(SMEMBERS <span class="st">"h3:"</span>+cell <span class="kw">for</span> cell <span class="kw">in</span> cells)
+
+<span class="cm">// narrow phase: exact great-circle filter</span>
+<span class="kw">return</span> [c <span class="kw">for</span> c <span class="kw">in</span> candidates <span class="kw">if</span> distM(point, c) &lt;= radius]`;
+
+const codeTransition = `prev := HGET geo:cell &lt;id&gt;
+cell := CellOf(lat, lng, res)
+<span class="kw">if</span> prev != cell {              <span class="cm">// crossed a hex boundary</span>
+    SREM <span class="st">"h3:"</span>+prev &lt;id&gt;      <span class="cm">// leave old cell</span>
+    SADD <span class="st">"h3:"</span>+cell &lt;id&gt;      <span class="cm">// join new cell</span>
+    HSET geo:cell &lt;id&gt; cell
+}
+HSET geo:pos &lt;id&gt; <span class="st">"lat,lng"</span>     <span class="cm">// refresh for narrow phase</span>`;
+---
+<section id="phase-2" class="chapter">
+  <div class="wrap">
+    <div class="reveal">
+      <span class="tag">PHASE 02 · SPATIAL INDEX</span>
+      <h2>Who's near me?</h2>
+      <p class="sub">The primitive every geo system is built on: given a point, find everything within radius R — fast. We add Uber's H3 hexagonal grid and a two-phase proximity query, then prove it correct against a reference.</p>
+    </div>
+
+    <figure class="figure reveal">
+      <img src={`${base}/img/phase2/nearby.gif`} alt="Clicking the map highlights an H3 hex disk and the drivers inside the radius turn pink" loading="lazy" />
+      <figcaption>Click anywhere → the indexer returns the H3 cell disk covering the radius (cyan hexes) and the drivers inside it (pink). A 1200m query scans ~127 cells, finds ~100 candidates, and exact-filters to the true circle in milliseconds.</figcaption>
+    </figure>
+
+    <div class="prose reveal">
+      <div class="h3">The problem</div>
+      <p>"Find everyone within 2km" is the beating heart of matching, surge, and the live UI. Done naively it's <code>O(N)</code> — measure the distance to every driver, every query. At 100k drivers and thousands of queries per second, that falls over. The fix is a <b>spatial index</b>: a structure that turns "near in space" into "near in a lookup".</p>
+
+      <div class="h3">Why H3 (hexagons) over geohash (squares)</div>
+      <ul>
+        <li><b>Uniform neighbors.</b> A hexagon has 6 neighbors, all equidistant. Squares have an awkward 4-vs-8 (diagonals are 1.41× farther), which warps any "within k rings" logic. H3's <code>gridDisk</code> is clean and isotropic.</li>
+        <li><b>Near-equal area.</b> Geohash cells stretch with latitude; H3 cells are far more uniform, so "density per cell" is meaningful — which matters for surge.</li>
+        <li><b>A cell is one 64-bit integer.</b> That makes it a perfect <em>partition key</em>: in Phase 4 we'll route the event stream by H3 cell so an area's events land on the same consumer — spatial locality for free.</li>
+      </ul>
+    </div>
+
+    <pre class="mermaid reveal" set:html={mermaid}></pre>
+
+    <div class="prose reveal">
+      <div class="h3">Resolution is a parameter, not a constant</div>
+      <p>H3 has 16 resolutions; each finer level divides cell area by seven. The right one depends on entity density and query radius — which differ wildly by entity type. City cars want <b>res 9</b> (~0.1 km², a few blocks). Aircraft from a live feed are sparse and continental, with a "nearby" radius of tens of kilometres — res 9 would put every plane alone in its own cell and make the query enumerate hundreds of thousands of hexes. So the indexer takes resolution as config: cars at 9, aircraft at ~6. Parent/child rollups let one fine index feed coarse aggregations (index cars at 9, sum surge at 7).</p>
+
+      <div class="h3">The two-phase query</div>
+      <p>Every spatial and collision system on earth uses the same shape: a cheap, approximate <b>broad phase</b> followed by an exact <b>narrow phase</b>.</p>
+    </div>
+
+    <div class="code reveal">
+      <div class="bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="lang">internal/spatial · /nearby</span></div>
+      <pre><code set:html={codeQuery}></code></pre>
+    </div>
+
+    <div class="prose reveal">
+      <p>The hex disk slightly over-includes (a hexagonal blob a bit larger than the circle); the exact great-circle filter trims it to the true radius. Cost is <code>O(cells + candidates)</code>, never <code>O(N)</code>.</p>
+
+      <div class="h3">Keeping the index live</div>
+      <p>Drivers move, so their cell changes. On each update the indexer detects a boundary crossing and moves the id between the old and new cell sets — all in a single pipelined Redis round-trip. Membership lives in Redis (not in memory) so it survives restarts and is shared with the matcher in the next phase.</p>
+    </div>
+
+    <div class="code reveal">
+      <div class="bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="lang">services/indexer · cell transition</span></div>
+      <pre><code set:html={codeTransition}></code></pre>
+    </div>
+
+    <figure class="figure reveal">
+      <img src={`${base}/img/phase2/query.png`} alt="Full metro view: H3 disk over downtown, matched drivers pink, others cyan" loading="lazy" />
+      <figcaption>The whole metro: matched drivers (pink) sit inside the hex disk; everyone else stays cyan. Querying water returns zero — the index is honestly spatial.</figcaption>
+    </figure>
+
+    <div class="prose reveal">
+      <div class="h3">Trust, but verify</div>
+      <p>A new index is only useful if it's correct. We kept the previous Redis <code>GEOSEARCH</code> as a reference oracle and compared results: for a 1500m query, the H3 path and <code>GEOSEARCH</code> both returned <b>80</b> drivers. Building an index and validating it against a known-correct reference is how you ship spatial code with confidence.</p>
+    </div>
+
+    <div class="reveal">
+      <div class="h3">Tradeoffs</div>
+      <table class="tbl">
+        <thead><tr><th>Decision</th><th>Chose</th><th>Rejected</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td>Index structure</td><td class="pick">H3 hex grid</td><td class="drop">geohash / quadtree / R-tree</td><td>uniform neighbors, stable partition key</td></tr>
+          <tr><td>Resolution</td><td class="pick">parameter (res 9)</td><td class="drop">hardcoded constant</td><td>aircraft need res ~6; one code path</td></tr>
+          <tr><td>Membership store</td><td class="pick">Redis Set per cell</td><td class="drop">in-process map</td><td>restart-safe, shared with matcher</td></tr>
+          <tr><td>Query shape</td><td class="pick">broad + narrow</td><td class="drop">scan all (O(N))</td><td>candidates ≪ N, exact filter cheap</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout reveal"><b>An engineering note:</b> H3's Go binding wraps a C library, so the indexer needs a C toolchain and a glibc runtime (distroless <em>base</em>, not <em>static</em>) — a dedicated cgo Dockerfile. And deck.gl's canvas sits above the basemap, so map clicks are handled by deck's <code>onClick</code>, not MapLibre's.</div>
+
+    <div class="prose reveal">
+      <div class="h3">What's next</div>
+      <p><b>Phase 3 — the matching engine.</b> Now that "who's near me" is fast, we assign riders to drivers under concurrency: greedy vs optimal assignment, locking to prevent double-booking, and the race conditions that make real dispatch hard.</p>
+    </div>
+  </div>
+</section>

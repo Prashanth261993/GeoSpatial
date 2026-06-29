@@ -1,12 +1,13 @@
 ---
 import Base from "../layouts/Base.astro";
 import Phase01 from "../components/Phase01.astro";
+import Phase02 from "../components/Phase02.astro";
 
 const roadmap = [
   { n: "00", t: "Skeleton & infra", s: "done" },
   { n: "01", t: "Ingest + live map", s: "done" },
-  { n: "02", t: "H3 indexing", s: "next" },
-  { n: "03", t: "Matching engine", s: "todo" },
+  { n: "02", t: "H3 indexing", s: "done" },
+  { n: "03", t: "Matching engine", s: "next" },
   { n: "04", t: "Redpanda backbone", s: "todo" },
   { n: "05", t: "Surge analytics", s: "todo" },
   { n: "06", t: "Real-feed toggle", s: "todo" },
@@ -57,4 +58,5 @@ const label = { done: "Shipped", next: "In progress", todo: "Planned" };
   </section>
 
   <Phase01 />
+  <Phase02 />
 </Base>
