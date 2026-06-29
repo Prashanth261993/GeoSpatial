@@ -37,3 +37,10 @@ Thumbs.db
 # Test/build artifacts
 .playwright-mcp/
 *.png
+*.heapsnapshot
+.gifframes/
+.gifenc/
+
+# Keep committed docs-site assets (override *.png above)
+!docs-site/public/**
+!docs-site/public/**/*.png
