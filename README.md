@@ -15,6 +15,21 @@ Brings up Redpanda, Redis, TimescaleDB, the Go services, simulator, and the map.
 Open http://localhost:5173 — 200 simulated Seattle drivers move in real time.
 Add `VITE_MAPTILER_KEY` to `.env` for dark vector tiles (else a plain fallback map).
 
+## Lifecycle (start / stop / status)
+```bash
+docker compose ps                 # status of all services
+docker compose logs -f ws-fanout  # tail a service's logs
+
+docker compose stop               # stop all (keeps data + containers)
+docker compose stop simulator     # stop just one service
+docker compose start              # resume after a stop
+
+docker compose down               # stop + remove containers/network (keeps volumes)
+docker compose down -v            # full reset: also wipes the TimescaleDB volume
+```
+`stop` is the gentle pause; `down` tears down; `down -v` wipes persisted DB data.
+The OSRM routing graph in `data/osrm/` is on disk and unaffected by any of these.
+
 See [SPEC.md](SPEC.md) for architecture and [docs/adr](docs/adr) for decisions.
 Roadmap and phase status: [ROADMAP.md](ROADMAP.md).
 
