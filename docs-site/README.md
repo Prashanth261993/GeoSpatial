@@ -22,3 +22,5 @@ Live at: https://prashanth261993.github.io/GeoSpatial/
    architecture mermaid, key code, result figure, tradeoffs, interview points, next).
 3. Import it in `src/pages/index.astro` and flip the roadmap card status.
 4. `npm run build` to verify, commit, push — Pages redeploys.
+
+<!-- pages deploy enabled -->
