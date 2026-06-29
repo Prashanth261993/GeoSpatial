@@ -10,3 +10,5 @@ github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f h1:lO4WD4F/r
 github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f/go.mod h1:cuUVRXasLTGF7a8hSLbxyZXjz+1KgoB3wDUb6vlszIc=
 github.com/redis/go-redis/v9 v9.6.1 h1:HHDteefn6ZkTtY5fGUE8tj8uy85AHk6zP7CpzIAM0y4=
 github.com/redis/go-redis/v9 v9.6.1/go.mod h1:0C0c6ycQsdpVNQpxb1njEQIqkx5UcsM8FJCQLgE9+RA=
+github.com/uber/h3-go/v4 v4.5.0 h1:7ruJoHCtYOCyihXfQRsPb4o6CfkhCBtVeZFM7+z1kww=
+github.com/uber/h3-go/v4 v4.5.0/go.mod h1:19vfSV5HQsnRZev7V0SPmTkVSZErL7/io8M/nx+++30=
