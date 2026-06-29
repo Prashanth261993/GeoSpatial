@@ -45,13 +45,12 @@ services:
       timeout: 5s
       retries: 10
 
-  # OSRM (Phase 1) — needs a Seattle OSM extract prebuilt into data/osrm.
-  # Deferred until Phase 1 to avoid a large download in scaffolding.
-  # osrm:
-  #   image: osrm/osrm-backend:v5.27.1
-  #   command: osrm-routed --algorithm mld /data/seattle.osrm
-  #   ports: ["5000:5000"]
-  #   volumes: ["./data/osrm:/data"]
+  # OSRM (Phase 1) — Seattle/WA routing graph prebuilt in data/osrm (MLD).
+  osrm:
+    image: osrm/osrm-backend:v5.25.0
+    command: osrm-routed --algorithm mld /data/seattle.osrm
+    ports: ["5000:5000"]
+    volumes: ["./data/osrm:/data"]
 
   ingest-gateway:
     build:
@@ -85,7 +84,8 @@ services:
     environment:
       INGEST_URL: http://ingest-gateway:8080
       DRIVERS: "200"
-    depends_on: [ingest-gateway]
+      OSRM_URL: http://osrm:5000
+    depends_on: [ingest-gateway, osrm]
 
   web:
     build:
