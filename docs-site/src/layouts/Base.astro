@@ -36,6 +36,13 @@ const base = import.meta.env.BASE_URL;
 
     <slot />
 
+    <!-- Lightbox: click any figure image to zoom -->
+    <div id="lightbox" class="lb" aria-hidden="true">
+      <button class="lb-close" aria-label="Close (Esc)">✕</button>
+      <div class="lb-hint">scroll / pinch to zoom · drag to pan · Esc to close</div>
+      <div class="lb-stage"><img id="lb-img" alt="" /></div>
+    </div>
+
     <footer>
       <div class="wrap">
         <div>Built in the open — one vertical slice per phase. © 2026</div>
@@ -67,6 +74,81 @@ const base = import.meta.env.BASE_URL;
         es.forEach((e) => { if (e.isIntersecting) e.target.classList.add("in"); });
       }, { threshold: 0.12 });
       document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
+    </script>
+
+    <!-- Lightbox interactions: open, zoom (wheel/pinch), pan (drag), close -->
+    <script is:inline>
+      (() => {
+        const lb = document.getElementById("lightbox");
+        const img = document.getElementById("lb-img");
+        const close = lb.querySelector(".lb-close");
+        let scale = 1, tx = 0, ty = 0, dragging = false, sx = 0, sy = 0;
+
+        const apply = () => { img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`; };
+        const reset = () => { scale = 1; tx = 0; ty = 0; apply(); };
+
+        const open = (src, alt) => {
+          img.src = src; img.alt = alt || "";
+          reset();
+          lb.classList.add("open"); lb.setAttribute("aria-hidden", "false");
+          document.body.style.overflow = "hidden";
+        };
+        const hide = () => {
+          lb.classList.remove("open"); lb.setAttribute("aria-hidden", "true");
+          document.body.style.overflow = "";
+          img.src = "";
+        };
+
+        // Open from any figure image
+        document.querySelectorAll(".figure img").forEach((el) => {
+          el.style.cursor = "zoom-in";
+          el.addEventListener("click", () => open(el.currentSrc || el.src, el.alt));
+        });
+
+        close.addEventListener("click", hide);
+        lb.addEventListener("click", (e) => { if (e.target === lb || e.target.classList.contains("lb-stage")) hide(); });
+        document.addEventListener("keydown", (e) => {
+          if (!lb.classList.contains("open")) return;
+          if (e.key === "Escape") hide();
+          if (e.key === "0") reset();
+        });
+
+        // Wheel zoom toward cursor
+        lb.addEventListener("wheel", (e) => {
+          if (!lb.classList.contains("open")) return;
+          e.preventDefault();
+          const prev = scale;
+          scale = Math.min(8, Math.max(1, scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+          if (scale === 1) { tx = 0; ty = 0; }
+          else {
+            const f = scale / prev;
+            tx = tx * f; ty = ty * f;
+          }
+          apply();
+        }, { passive: false });
+
+        // Double-click toggles 1x / 2.5x
+        img.addEventListener("dblclick", (e) => {
+          e.stopPropagation();
+          scale = scale > 1 ? 1 : 2.5;
+          if (scale === 1) { tx = 0; ty = 0; }
+          apply();
+        });
+
+        // Drag to pan when zoomed
+        img.addEventListener("pointerdown", (e) => {
+          if (scale === 1) return;
+          dragging = true; sx = e.clientX - tx; sy = e.clientY - ty;
+          img.setPointerCapture(e.pointerId); img.style.cursor = "grabbing";
+        });
+        img.addEventListener("pointermove", (e) => {
+          if (!dragging) return;
+          tx = e.clientX - sx; ty = e.clientY - sy; apply();
+        });
+        const endDrag = () => { dragging = false; img.style.cursor = scale > 1 ? "grab" : "zoom-out"; };
+        img.addEventListener("pointerup", endDrag);
+        img.addEventListener("pointercancel", endDrag);
+      })();
     </script>
   </body>
 </html>
