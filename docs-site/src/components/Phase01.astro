@@ -112,17 +112,6 @@ const codeInterp = `<span class="kw">const</span> a = Math.min(<span class="fn">
 
     <div class="callout reveal"><b>A bug worth remembering:</b> a missing <code>main.tsx</code> made Vite serve a 404 and a blank page while every container reported healthy. A green stack can still serve a broken app — always verify the actual rendered page, not just process health.</div>
 
-    <div class="reveal">
-      <div class="h3">Interview talking points</div>
-      <div class="chips">
-        <div class="chip">Stateless HTTP in, WebSocket out: cheap producers, push fan-out.</div>
-        <div class="chip">2D→1D geohash turns radius queries into range scans, not table scans.</div>
-        <div class="chip">Sparse server + client interpolation = 60fps on ~1Hz data, tiny bandwidth.</div>
-        <div class="chip">Per-client buffered channels with drop-on-overflow = bounded backpressure.</div>
-        <div class="chip">Pub/sub now, Kafka later — the HTTP boundary never moves; only the bus does.</div>
-      </div>
-    </div>
-
     <div class="prose reveal">
       <div class="h3">What's next</div>
       <p><b>Phase 2 — H3 indexing.</b> We replace raw Redis GEO with Uber's H3 hex grid: equal-area cells, clean k-ring neighbor math, and — crucially — a spatial key we'll later use to <em>partition</em> the event stream. "Who's near me" gets faster and becomes the foundation for matching and surge.</p>
