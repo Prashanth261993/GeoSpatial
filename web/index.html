@@ -6,14 +6,34 @@
     <title>Seattle Live — Geospatial</title>
     <style>
       html, body, #root { margin: 0; height: 100%; background: #0b0e14; }
-      #hud { position: absolute; top: 12px; left: 12px; z-index: 1; color: #cdd6f4;
-        font: 13px ui-monospace, monospace; background: #11131aee; padding: 8px 12px;
-        border-radius: 8px; border: 1px solid #1f2430; }
+      .panel { position: absolute; z-index: 1; color: #cdd6f4;
+        font: 13px ui-monospace, "Cascadia Code", monospace; background: #11131aee;
+        padding: 10px 14px; border-radius: 10px; border: 1px solid #1f2430; }
+      #hud { top: 12px; left: 12px; }
       #hud b { color: #89dceb; }
+      #stats { top: 12px; right: 12px; min-width: 210px; }
+      #stats .row { display: flex; justify-content: space-between; gap: 18px; margin: 3px 0; }
+      #stats .k { color: #8b93a7; }
+      #stats .v { color: #89dceb; font-weight: 700; }
+      #stats h4 { margin: 0 0 8px; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; color: #b4befe; }
+      #legend { bottom: 12px; left: 12px; display: flex; gap: 16px; }
+      #legend span { display: flex; align-items: center; gap: 6px; }
+      #legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
     </style>
   </head>
   <body>
-    <div id="hud">Seattle drivers: <b id="count">0</b><br /><span id="near" style="color:#a6adc8">click the map to find nearby drivers</span></div>
+    <div id="hud" class="panel">Seattle drivers: <b id="count">0</b><br /><span id="near" style="color:#a6adc8">click the map to find nearby drivers</span></div>
+    <div id="stats" class="panel">
+      <h4>Matching · <span id="mode">greedy</span></h4>
+      <div class="row"><span class="k">active trips</span><span class="v" id="active">0</span></div>
+      <div class="row"><span class="k">total assigned</span><span class="v" id="assigned">0</span></div>
+      <div class="row"><span class="k">avg pickup</span><span class="v" id="avg">—</span></div>
+    </div>
+    <div id="legend" class="panel">
+      <span><i style="background:#89dceb"></i>driver</span>
+      <span><i style="background:#f9e2af"></i>rider</span>
+      <span><i style="background:#f5c2e7"></i>on trip</span>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
