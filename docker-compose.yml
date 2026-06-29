@@ -90,6 +90,9 @@ services:
   web:
     build:
       context: ./web
+    environment:
+      VITE_MAPTILER_KEY: ${VITE_MAPTILER_KEY:-}
+      VITE_WS_URL: ${VITE_WS_URL:-ws://localhost:8090/ws}
     ports: ["5173:5173"]
     depends_on: [ws-fanout]
 
