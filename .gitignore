@@ -33,3 +33,7 @@ dist/
 Thumbs.db
 .idea/
 .vscode/
+
+# Test/build artifacts
+.playwright-mcp/
+*.png
