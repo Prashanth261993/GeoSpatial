@@ -10,11 +10,11 @@
 | 3 | Matching engine: greedy, locking, no double-assign | ⬜ |
 | 4 | Redpanda backbone: partition by H3, idempotency, backpressure | ⬜ |
 | 5 | Surge analytics: windowed spatial aggregation + heatmap | ⬜ |
-| 6 | Free-cloud deploy + CDN | ⬜ |
-| 7 | Real-feed toggle (OpenSky / GTFS-RT) → MVP demoable | ⬜ |
-| 8 | Observability: Prometheus/Grafana, traces | ⬜ |
-| 9 | Rust hot path (matcher/indexer), measured | ⬜ |
-| 10 | Cinematic frontend: custom shaders, trails, surge ripple | ⬜ |
+| 6 | Real-feed toggle (OpenSky / GTFS-RT) → MVP demoable | ⬜ |
+| 7 | Observability: Prometheus/Grafana, traces | ⬜ |
+| 8 | Rust hot path (matcher/indexer), measured | ⬜ |
+| 9 | Cinematic frontend: custom shaders, trails, surge ripple | ⬜ |
+| 10 | Free-cloud deploy + CDN (final system only) | ⬜ |
 
 Architecture: Go microservices · Redpanda · Redis · TimescaleDB · OSRM · React/deck.gl (Rust later).
 Domain: Seattle rideshare. See SPEC.md and docs/adr.
