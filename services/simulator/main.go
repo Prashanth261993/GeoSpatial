@@ -39,8 +39,37 @@ func main() {
 		wg.Add(1)
 		go driver(fmt.Sprintf("d%04d", i), &wg)
 	}
+
+	// Rider demand: periodically a rider requests a trip from the matcher.
+	if matcher := env("MATCHER_URL", ""); matcher != "" {
+		rate, _ := strconv.Atoi(env("RIDER_RATE_MS", "700"))
+		wg.Add(1)
+		go riders(matcher+"/request", time.Duration(rate)*time.Millisecond, &wg)
+		log.Printf("simulator: rider demand -> %s every %dms", matcher, rate)
+	}
+
 	log.Printf("simulator: %d drivers -> %s (osrm=%q)", n, ingest, osrm)
 	wg.Wait()
+}
+
+// riders emits trip requests at random Seattle locations.
+func riders(url string, every time.Duration, wg *sync.WaitGroup) {
+	defer wg.Done()
+	cli := &http.Client{Timeout: 5 * time.Second}
+	t := time.NewTicker(every)
+	seq := 0
+	for range t.C {
+		seq++
+		lat := centerLat + (rand.Float64()-0.5)*spread
+		lng := centerLng + (rand.Float64()-0.5)*spread
+		body, _ := json.Marshal(map[string]any{
+			"reqId": fmt.Sprintf("r%d-%d", time.Now().Unix(), seq),
+			"lat":   lat, "lng": lng,
+		})
+		if resp, err := cli.Post(url, "application/json", bytes.NewReader(body)); err == nil {
+			resp.Body.Close()
+		}
+	}
 }
 
 func driver(id string, wg *sync.WaitGroup) {

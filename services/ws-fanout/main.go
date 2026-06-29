@@ -12,8 +12,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const channel = "positions"
-
 type hub struct {
 	mu      sync.RWMutex
 	clients map[chan []byte]struct{}
@@ -52,7 +50,7 @@ func main() {
 	h := newHub()
 
 	go func() {
-		sub := rdb.Subscribe(context.Background(), channel)
+		sub := rdb.Subscribe(context.Background(), "positions", "trips")
 		for msg := range sub.Channel() {
 			h.broadcast([]byte(msg.Payload))
 		}

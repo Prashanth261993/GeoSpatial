@@ -1,0 +1,97 @@
+---
+const base = import.meta.env.BASE_URL;
+
+const mermaid = `flowchart LR
+  RD["rider<br/>POST /request"] --> M["matcher"]
+  M -->|"/nearby"| IX["candidates"]
+  IX --> CH{"greedy or<br/>batched-optimal"}
+  CH -->|"SET NX EX"| LK[("Redis lock<br/>lock:driver:id")]
+  LK -->|"claimed"| TR["trip:<br/>assigned → completed"]
+  TR --> WS["ws-fanout → map"]`;
+
+const codeLock = `<span class="cm">// check-and-claim must be ONE atomic op, or two riders race the same driver.</span>
+ok := rdb.SetNX(ctx, <span class="st">"lock:driver:"</span>+driverID, reqID, <span class="fn">30</span>*time.Second)
+<span class="cm">// NX = set only if absent · EX 30 = TTL self-heals a crashed matcher</span>
+<span class="kw">if</span> ok { assign(driver, rider) } <span class="kw">else</span> { tryNextCandidate() }`;
+
+const codeGreedy = `<span class="cm">// greedy: nearest free driver wins; the lock decides ties under contention</span>
+sort(candidates, byDistance)
+<span class="kw">for</span> _, c := <span class="kw">range</span> candidates {
+    <span class="kw">if</span> claim(c.ID, reqID) { <span class="kw">return</span> assign(req, c) } <span class="cm">// first lock wins</span>
+}`;
+---
+<section id="phase-3" class="chapter">
+  <div class="wrap">
+    <div class="reveal">
+      <span class="tag">PHASE 03 · MATCHING ENGINE</span>
+      <h2>Assigning riders to drivers — without ever double-booking</h2>
+      <p class="sub">The concurrency heart of the system. A driver is a shared resource two riders can grab at the same instant. Getting this right — atomically, under load, while keeping pickups short — is what separates a demo from a dispatch system.</p>
+    </div>
+
+    <figure class="figure reveal">
+      <img src={`${base}/img/phase3/matching.gif`} alt="Live matching: arcs from drivers to riders, pink markers animating along trips, stats panel updating" loading="lazy" />
+      <figcaption>Live dispatch over Seattle: each arc is a trip (driver → rider), the pink marker animates the pickup, yellow dots are waiting riders. The panel tracks active trips and average pickup distance in real time.</figcaption>
+    </figure>
+
+    <div class="prose reveal">
+      <div class="h3">Two ways to assign</div>
+      <p>Matching is a bipartite problem — riders on one side, drivers on the other — and the goal is to minimize total pickup distance.</p>
+      <ul>
+        <li><b>Greedy (nearest-free).</b> For each rider, take the closest available driver. Online and fast, but locally selfish: one rider grabs the driver that was perfect for another, pushing them to a farther one.</li>
+        <li><b>Optimal (Hungarian).</b> Solve the whole batch at once for the globally minimal total cost. Provably best, but <code>O(n³)</code> and needs a batch — so production buffers a short window and solves that. We implement both.</li>
+      </ul>
+
+      <div class="h3">The measured gain</div>
+      <p>Optimal isn't just theoretically nicer — we measured it. Across 500 random Seattle scenarios per size (and the test asserts optimal is never worse than greedy):</p>
+    </div>
+
+    <div class="reveal">
+      <table class="tbl">
+        <thead><tr><th>Riders × Drivers</th><th>Greedy avg pickup</th><th>Optimal avg pickup</th><th>Improvement</th></tr></thead>
+        <tbody>
+          <tr><td>10 × 12</td><td>1348 m</td><td>1172 m</td><td class="pick">−13.1%</td></tr>
+          <tr><td>25 × 30</td><td>902 m</td><td>758 m</td><td class="pick">−15.9%</td></tr>
+          <tr><td>50 × 60</td><td>661 m</td><td>547 m</td><td class="pick">−17.3%</td></tr>
+          <tr><td>100 × 120</td><td>481 m</td><td>390 m</td><td class="pick">−19.0%</td></tr>
+        </tbody>
+      </table>
+      <p class="prose" style="color:#8b93a7;font-size:14px;">Optimal cuts average pickup distance 13–19% — and the advantage grows with density, because greedy makes more locally-good, globally-bad picks when drivers are plentiful.</p>
+    </div>
+
+    <pre class="mermaid reveal" set:html={mermaid}></pre>
+
+    <div class="prose reveal">
+      <div class="h3">The race that breaks naïve dispatch</div>
+      <p>Two riders, one driver. Both call "who's near me", both see the same driver free, both try to assign it — and now it's double-booked. This is a classic <b>time-of-check-to-time-of-use</b> race: the check ("is it free?") and the use ("take it") aren't atomic. The fix is to make claiming a driver a single atomic operation.</p>
+    </div>
+
+    <div class="code reveal">
+      <div class="bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="lang">services/matcher · atomic claim</span></div>
+      <pre><code set:html={codeLock}></code></pre>
+    </div>
+
+    <div class="prose reveal">
+      <p><code>SET NX</code> ("set if not exists") collapses check-and-claim into one indivisible step, so the race is impossible. The <code>EX 30</code> TTL matters just as much: if the matcher crashes mid-trip, the lock would otherwise strand that driver forever — the TTL auto-releases it, so the system self-heals. (That's the core idea behind distributed locks like Redlock.)</p>
+    </div>
+
+    <div class="code reveal">
+      <div class="bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="lang">services/matcher · greedy</span></div>
+      <pre><code set:html={codeGreedy}></code></pre>
+    </div>
+
+    <div class="callout reveal"><b>Proven, not asserted.</b> Fired 50 concurrent requests at the <em>exact same point</em> → 50 unique drivers, zero collisions. Monitored live trips → zero double-assignments, never more than one trip per driver. The atomic lock holds under maximal contention.</div>
+
+    <figure class="figure reveal">
+      <img src={`${base}/img/phase3/trips.png`} alt="Metro-wide view of active trips with arcs and the live stats panel" loading="lazy" />
+      <figcaption>Metro view: arcs fan out as riders are matched; the stats panel shows the mode (greedy), active trips, total assigned, and a live average pickup distance.</figcaption>
+    </figure>
+
+    <div class="prose reveal">
+      <div class="h3">A trip is a tiny state machine</div>
+      <p>A driver isn't simply free or busy. On assignment it moves to a reserved/on-trip state, the map animates the pickup, and after the trip completes the lock is released and the driver returns to the pool. Requests are idempotent by id, so a rider's retry after a network blip returns the same assignment instead of creating a duplicate trip.</p>
+
+      <div class="h3">What's next</div>
+      <p><b>Phase 4 — the Redpanda backbone.</b> We replace the in-process pub/sub with a real event log partitioned by H3 cell, so an area's events land on the same consumer. That brings true partitioning, replay, backpressure, and exactly-once idempotency to everything we've built.</p>
+    </div>
+  </div>
+</section>
