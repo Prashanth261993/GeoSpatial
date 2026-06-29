@@ -1,0 +1,35 @@
+# Secrets / env
+.env
+.env.local
+*.local
+
+# Learning-exercise meta (kept out of clean repo)
+lessons/
+copilot-instructions.md
+
+# OSRM / map data (large, downloaded per city)
+data/osrm/
+*.osm.pbf
+*.osrm*
+
+# Go
+bin/
+*.exe
+*.test
+*.out
+vendor/
+
+# Rust
+target/
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
