@@ -5,10 +5,11 @@ import { Deck } from "@deck.gl/core";
 import { ScatterplotLayer, ArcLayer, IconLayer } from "@deck.gl/layers";
 import { H3HexagonLayer } from "@deck.gl/geo-layers";
 
-type Pos = { id: string; lat: number; lng: number; ts: number; type?: string; hdg?: number };
+type Pos = { id: string; lat: number; lng: number; ts: number; type?: string; hdg?: number; callsign?: string; country?: string; altM?: number; velMps?: number; vRateMps?: number };
 type Track = { fromLng: number; fromLat: number; toLng: number; toLat: number; t0: number; t1: number };
-type Air = Track & { hdg: number };
+type Air = Track & { hdg: number; callsign: string; country: string; altM: number; velMps: number; vRateMps: number };
 type Trip = { reqId: string; driver: string; dLat: number; dLng: number; rLat: number; rLng: number; t0: number; durMs: number };
+type Wait = { lng: number; lat: number; t0: number };
 type Query = { cells: string[]; matched: Set<string>; center: [number, number] | null };
 
 const KEY = import.meta.env.VITE_MAPTILER_KEY as string | undefined;
@@ -50,7 +51,7 @@ export function App() {
     const deck = new Deck({
       parent: ref.current!,
       initialViewState: { longitude: -122.3321, latitude: 47.6062, zoom: 11.5 },
-      controller: true, getCursor: () => "crosshair",
+      controller: true, getCursor: () => "crosshair", pickingRadius: 12,
       onViewStateChange: ({ viewState: v }) => {
         map.jumpTo({ center: [v.longitude, v.latitude], zoom: v.zoom, bearing: v.bearing, pitch: v.pitch });
       },
@@ -60,6 +61,7 @@ export function App() {
     const tracks = new Map<string, Track>();
     const aircraft = new Map<string, Air>();
     const trips = new Map<string, Trip>();
+    const waiting = new Map<string, Wait>(); // reqId -> unassigned rider
     const query: Query = { cells: [], matched: new Set(), center: null };
     let surgeZones: { cell: string; surge: number }[] = [];
     const show = { ops: true, surge: false, air: false };
@@ -88,22 +90,46 @@ export function App() {
         setNear(`${j.matchCount} drivers within ${RADIUS}m · ${j.cells.length} cells · ${j.candidateCount} candidates`);
       } catch { setNear("query failed — is the indexer up?"); }
     };
-    deck.setProps({ onClick: (info: any) => { if (info?.coordinate) runQuery(info.coordinate[0], info.coordinate[1]); } });
+    deck.setProps({
+      onClick: (info: any) => { if (info?.coordinate && !info?.object) runQuery(info.coordinate[0], info.coordinate[1]); },
+      getTooltip: (info: any) => {
+        const o = info?.object;
+        if (!o || o.kind !== "aircraft") return null;
+        const alt = o.altM ? `${Math.round(o.altM * 3.281).toLocaleString()} ft` : "—";
+        const spd = o.velMps ? `${Math.round(o.velMps * 1.944)} kts` : "—";
+        const vr = o.vRateMps ? (o.vRateMps > 0 ? `▲ ${Math.round(o.vRateMps * 196.85)} ft/min` : `▼ ${Math.round(-o.vRateMps * 196.85)} ft/min`) : "level";
+        return {
+          html: `<div style="font:12px ui-monospace,monospace"><b style="color:#89dceb">${o.callsign || o.id}</b><br/>${o.country || ""}<br/>alt ${alt} · ${spd}<br/>${vr} · hdg ${Math.round(o.hdg)}°</div>`,
+          style: { background: "#0b0e14f2", border: "1px solid #2a3346", borderRadius: "8px", color: "#cdd6f4", padding: "8px 10px" },
+        };
+      },
+    });
 
     const ws = new WebSocket(WS);
     ws.onmessage = (e) => {
       const m = JSON.parse(e.data);
       if (m.kind === "trip") {
-        if (m.event === "assigned") {
+        if (m.event === "requested") {
+          waiting.set(m.reqId, { lng: m.riderLng, lat: m.riderLat, t0: performance.now() });
+        } else if (m.event === "assigned") {
+          waiting.delete(m.reqId);
           trips.set(m.reqId, { reqId: m.reqId, driver: m.driver, dLat: m.driverLat, dLng: m.driverLng, rLat: m.riderLat, rLng: m.riderLng, t0: performance.now(), durMs: m.durMs });
-        } else if (m.event === "completed") { trips.delete(m.reqId); }
+        } else if (m.event === "completed") {
+          const t = trips.get(m.reqId);
+          trips.delete(m.reqId);
+          // Snap the driver to the drop-off (rider) so it resumes from there
+          // instead of teleporting to wherever the simulator drifted it.
+          if (t) tracks.set(t.driver, { fromLng: t.rLng, fromLat: t.rLat, toLng: t.rLng, toLat: t.rLat, t0: performance.now(), t1: performance.now() + 1000 });
+        } else if (m.event === "unmatched") {
+          waiting.set(m.reqId, { lng: m.riderLng, lat: m.riderLat, t0: performance.now() });
+        }
         return;
       }
       const p: Pos = m;
       const now = performance.now();
       if (p.type === "aircraft") {
         const prev = aircraft.get(p.id);
-        aircraft.set(p.id, { fromLng: prev?.toLng ?? p.lng, fromLat: prev?.toLat ?? p.lat, toLng: p.lng, toLat: p.lat, t0: now, t1: now + 12000, hdg: p.hdg ?? 0 });
+        aircraft.set(p.id, { fromLng: prev?.toLng ?? p.lng, fromLat: prev?.toLat ?? p.lat, toLng: p.lng, toLat: p.lat, t0: now, t1: now + 12000, hdg: p.hdg ?? 0, callsign: p.callsign || "", country: p.country || "", altM: p.altM || 0, velMps: p.velMps || 0, vRateMps: p.vRateMps || 0 });
         return;
       }
       const prev = tracks.get(p.id);
@@ -120,7 +146,12 @@ export function App() {
       setCount(tracks.size);
       const tripList = [...trips.values()];
       const markers = tripList.map((t) => { const a = Math.min(1, (now - t.t0) / t.durMs); return { position: [t.dLng + (t.rLng - t.dLng) * a, t.dLat + (t.rLat - t.dLat) * a] }; });
-      const airList = [...aircraft.values()].map((a) => ({ position: lerp(a), hdg: a.hdg }));
+      const airList = [...aircraft.entries()].map(([id, a]) => ({ kind: "aircraft", id, position: lerp(a), hdg: a.hdg, callsign: a.callsign, country: a.country, altM: a.altM, velMps: a.velMps, vRateMps: a.vRateMps }));
+
+      // Expire stale waiting riders (unmatched linger, then fade after 15s).
+      for (const [id, w] of waiting) { if (now - w.t0 > 15000) waiting.delete(id); }
+      const waitList = [...waiting.values()].map((w) => ({ position: [w.lng, w.lat], age: now - w.t0 }));
+      setText("waiting", String(waiting.size));
 
       const layers: any[] = [];
       if (show.surge && surgeZones.length) {
@@ -135,24 +166,30 @@ export function App() {
           layers.push(new H3HexagonLayer({ id: "disk", data: query.cells, getHexagon: (d: string) => d, filled: true, stroked: true, extruded: false, getFillColor: [137, 220, 235, 18], getLineColor: [137, 220, 235, 110], lineWidthMinPixels: 1 }));
         }
         layers.push(new ArcLayer({ id: "arcs", data: tripList, getSourcePosition: (t: Trip) => [t.dLng, t.dLat], getTargetPosition: (t: Trip) => [t.rLng, t.rLat], getSourceColor: [245, 194, 231], getTargetColor: [249, 226, 175], getWidth: 2, getHeight: 0.3 }));
-        // riders as pins
-        layers.push(new IconLayer({ id: "riders", data: tripList, getIcon: () => ICON.pin, getPosition: (t: Trip) => [t.rLng, t.rLat], getSize: 26, sizeUnits: "pixels", getColor: [249, 226, 175] }));
+        // waiting riders (unassigned): pulsing halo + pin
+        layers.push(new ScatterplotLayer({
+          id: "waiting-halo", data: waitList, getPosition: (d: any) => d.position,
+          getRadius: (d: any) => 70 + 55 * Math.abs(Math.sin((now + d.age) / 450)),
+          radiusUnits: "meters", radiusMinPixels: 6, getFillColor: [249, 226, 175, 40],
+          updateTriggers: { getRadius: now },
+        }));
+        layers.push(new IconLayer({ id: "waiting", data: waitList, getIcon: () => ICON.pin, getPosition: (d: any) => d.position, getSize: 22, sizeUnits: "pixels", getColor: [249, 226, 175] }));
         // drivers as cars (matched = lavender, else cyan)
         layers.push(new IconLayer({ id: "drivers", data: drivers, getIcon: () => ICON.car, getPosition: (d: any) => d.position, getSize: (d: any) => (d.matched ? 26 : 20), sizeUnits: "pixels", getColor: (d: any) => (d.matched ? [180, 190, 254] : [137, 220, 235]), updateTriggers: { getColor: query.matched, getSize: query.matched } }));
-        // on-trip cars in pink
+        // on-trip cars in pink (heading to pickup)
         layers.push(new IconLayer({ id: "trip-cars", data: markers, getIcon: () => ICON.car, getPosition: (d: any) => d.position, getSize: 24, sizeUnits: "pixels", getColor: [245, 194, 231] }));
         if (query.center) {
           layers.push(new ScatterplotLayer({ id: "marker", data: [query.center], getPosition: (d: number[]) => d, getRadius: 90, radiusMinPixels: 5, getFillColor: [243, 139, 168], stroked: true, getLineColor: [255, 255, 255], lineWidthMinPixels: 2 }));
         }
       }
-      // real aircraft (toggle): plane glyphs rotated by heading
+      // real aircraft (toggle): plane glyphs rotated by heading, clickable for details
       if (show.air && airList.length) {
-        setAir(`${airList.length} live aircraft (OpenSky)`);
+        setAir(`${airList.length} live aircraft · click for details`);
         layers.push(new IconLayer({
           id: "aircraft", data: airList, getIcon: () => ICON.plane,
           getPosition: (d: any) => d.position, getSize: 30, sizeUnits: "pixels",
           getAngle: (d: any) => -d.hdg, getColor: [180, 190, 254],
-          updateTriggers: { getAngle: now },
+          pickable: true, updateTriggers: { getAngle: now },
         }));
       }
       deck.setProps({ layers });

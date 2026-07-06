@@ -11,6 +11,13 @@ type Position struct {
 	Ts   int64   `json:"ts"`
 	Type string  `json:"type,omitempty"` // "driver" (default) | "aircraft" | "bus"
 	Hdg  float64 `json:"hdg,omitempty"`
+
+	// Aircraft-only enrichment (from OpenSky), used for the hover tooltip.
+	Callsign string  `json:"callsign,omitempty"`
+	Country  string  `json:"country,omitempty"`
+	AltM     float64 `json:"altM,omitempty"`  // geometric altitude, meters
+	VelMps   float64 `json:"velMps,omitempty"` // ground speed, m/s
+	VRateMps float64 `json:"vRateMps,omitempty"` // vertical rate, m/s
 }
 
 // Entity types.

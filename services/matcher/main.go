@@ -52,7 +52,7 @@ type nearbyDriver struct {
 
 type tripEvent struct {
 	Kind       string  `json:"kind"`
-	Event      string  `json:"event"` // assigned | completed
+	Event      string  `json:"event"` // requested | assigned | completed | unmatched
 	ReqID      string  `json:"reqId"`
 	Driver     string  `json:"driver"`
 	DriverLat  float64 `json:"driverLat"`
@@ -112,6 +112,10 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		bus.Produce(ctx, prod, bus.TopicRequests, key, body)
 	}
 
+	// Announce a waiting rider so the map can show unassigned demand.
+	publish(ctx, tripEvent{Kind: "trip", Event: "requested", ReqID: req.ReqID,
+		RiderLat: req.Lat, RiderLng: req.Lng, Ts: time.Now().UnixMilli()})
+
 	// idempotency: a repeated reqId returns the existing assignment.
 	if existing, _ := rdb.HGet(ctx, "req:assigned", req.ReqID).Result(); existing != "" {
 		writeJSON(w, map[string]any{"reqId": req.ReqID, "driver": existing, "idempotent": true})
@@ -127,6 +131,9 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"reqId": req.ReqID, "driver": d, "pickupDist": dist})
 		return
 	}
+	// No driver available: rider keeps waiting (surge signal).
+	publish(ctx, tripEvent{Kind: "trip", Event: "unmatched", ReqID: req.ReqID,
+		RiderLat: req.Lat, RiderLng: req.Lng, Ts: time.Now().UnixMilli()})
 	http.Error(w, "no driver available", http.StatusServiceUnavailable)
 }
 

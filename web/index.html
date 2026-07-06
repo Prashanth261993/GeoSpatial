@@ -6,40 +6,54 @@
     <title>Seattle Live — Geospatial</title>
     <style>
       html, body, #root { margin: 0; height: 100%; background: #0b0e14; }
-      .panel { position: absolute; z-index: 1; color: #cdd6f4;
+      .panel { color: #cdd6f4;
         font: 13px ui-monospace, "Cascadia Code", monospace; background: #11131aee;
         padding: 10px 14px; border-radius: 10px; border: 1px solid #1f2430; }
-      #hud { top: 12px; left: 12px; }
+      #hud { position: absolute; z-index: 1; top: 12px; left: 12px; }
       #hud b { color: #89dceb; }
-      #stats { top: 12px; right: 12px; min-width: 210px; }
+      #rightcol { position: absolute; z-index: 1; top: 12px; right: 12px;
+        display: flex; flex-direction: column; gap: 10px; align-items: flex-end; }
+      #stats { min-width: 210px; }
       #stats .row { display: flex; justify-content: space-between; gap: 18px; margin: 3px 0; }
       #stats .k { color: #8b93a7; }
       #stats .v { color: #89dceb; font-weight: 700; }
       #stats h4 { margin: 0 0 8px; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; color: #b4befe; }
-      #legend { bottom: 12px; left: 12px; display: flex; gap: 16px; }
+      #toggles { display: flex; gap: 14px; }
+      #toggles label { cursor: pointer; }
+      #airbar #air { color: #b4befe; }
+      #legend { position: absolute; z-index: 1; bottom: 12px; left: 12px; display: flex; gap: 16px; flex-wrap: wrap; max-width: 60vw; }
       #legend span { display: flex; align-items: center; gap: 6px; }
       #legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+      #tooltip { position: absolute; z-index: 2; pointer-events: none; display: none;
+        background: #0b0e14f2; color: #cdd6f4; border: 1px solid #2a3346; border-radius: 8px;
+        padding: 8px 10px; font: 12px ui-monospace, monospace; box-shadow: 0 8px 24px -8px #000; }
+      #tooltip b { color: #89dceb; }
     </style>
   </head>
   <body>
     <div id="hud" class="panel">Seattle drivers: <b id="count">0</b><br /><span id="near" style="color:#a6adc8">click the map to find nearby drivers</span></div>
-    <div id="stats" class="panel">
-      <h4>Matching · <span id="mode">greedy</span></h4>
-      <div class="row"><span class="k">active trips</span><span class="v" id="active">0</span></div>
-      <div class="row"><span class="k">total assigned</span><span class="v" id="assigned">0</span></div>
-      <div class="row"><span class="k">avg pickup</span><span class="v" id="avg">—</span></div>
+    <div id="rightcol">
+      <div id="stats" class="panel">
+        <h4>Matching · <span id="mode">greedy</span></h4>
+        <div class="row"><span class="k">active trips</span><span class="v" id="active">0</span></div>
+        <div class="row"><span class="k">waiting riders</span><span class="v" id="waiting">0</span></div>
+        <div class="row"><span class="k">total assigned</span><span class="v" id="assigned">0</span></div>
+        <div class="row"><span class="k">avg pickup</span><span class="v" id="avg">—</span></div>
+      </div>
+      <div id="toggles" class="panel">
+        <label><input type="checkbox" id="tgl-ops" checked /> ops</label>
+        <label><input type="checkbox" id="tgl-surge" /> surge</label>
+        <label><input type="checkbox" id="tgl-air" /> ✈ aircraft</label>
+      </div>
+      <div id="airbar" class="panel"><span id="air">toggle ✈ to stream real aircraft</span></div>
     </div>
     <div id="legend" class="panel">
       <span><i style="background:#89dceb"></i>driver</span>
-      <span><i style="background:#f9e2af"></i>rider</span>
+      <span><i style="background:#f9e2af"></i>waiting rider</span>
       <span><i style="background:#f5c2e7"></i>on trip</span>
+      <span><i style="background:#b4befe"></i>aircraft</span>
     </div>
-    <div id="toggles" class="panel" style="bottom:12px; right:12px; display:flex; gap:14px;">
-      <label style="cursor:pointer;"><input type="checkbox" id="tgl-ops" checked /> ops</label>
-      <label style="cursor:pointer;"><input type="checkbox" id="tgl-surge" /> surge</label>
-      <label style="cursor:pointer;"><input type="checkbox" id="tgl-air" /> ✈ live aircraft</label>
-    </div>
-    <div id="airbar" class="panel" style="bottom:56px; right:12px;"><span id="air" style="color:#b4befe">toggle ✈ to stream real aircraft</span></div>
+    <div id="tooltip"></div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

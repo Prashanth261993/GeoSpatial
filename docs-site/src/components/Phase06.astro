@@ -70,8 +70,13 @@ const codeResilient = `resp, err := client.Do(req)          <span class="cm">// 
 
     <figure class="figure reveal">
       <img src={`${base}/img/phase6/aircraft.png`} alt="Wide view of live aircraft as plane silhouettes across the airspace" loading="lazy" />
-      <figcaption>Plane silhouettes, each turned to its real track. Semantic icon glyphs (car, pin, plane) replace generic dots — telling you <em>what</em> each entity is, not just where.</figcaption>
+      <figcaption>Plane silhouettes, each turned to its real track. Semantic icon glyphs (car, pin, plane) replace generic dots — telling you <em>what</em> each entity is, not just where. Click any aircraft for live telemetry: callsign, altitude, ground speed, climb rate, and heading, straight from the feed.</figcaption>
     </figure>
+
+    <div class="prose reveal">
+      <div class="h3">Details on demand, and demand you couldn't serve</div>
+      <p>Two touches make the real-data view read like an operations console. Every aircraft is <b>clickable</b> — hovering surfaces its real telemetry (e.g. <code>N227GW · 1,625 ft · 167 kts · ▼ 1,344 ft/min · hdg 251°</code>), the same fields air-traffic tools show, pulled live from OpenSky. And <b>waiting riders</b> — requests not yet matched — now render as pulsing pins with a live count, so unmet demand is visible on the map, not just implied by the surge heatmap.</p>
+    </div>
 
     <div class="callout reveal"><b>Foresight paying off.</b> Back in the indexing phase we made resolution a parameter precisely because aircraft live at a different spatial scale than city cars. Adding a wildly different entity type here was a config value and a type flag — not a rewrite. Clean early decisions compound.</div>
 
