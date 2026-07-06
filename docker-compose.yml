@@ -177,7 +177,7 @@ services:
       VITE_STATS_URL: ${VITE_STATS_URL:-http://localhost:8110/stats}
       VITE_SURGE_URL: ${VITE_SURGE_URL:-http://localhost:8120/surge}
       VITE_FEEDS_URL: ${VITE_FEEDS_URL:-http://localhost:8130/feeds}
-    ports: ["5174:5173"]
+    ports: ["8899:5173"]
     depends_on: [ws-fanout]
 
 volumes:
