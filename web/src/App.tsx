@@ -2,13 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { Deck } from "@deck.gl/core";
-import { ScatterplotLayer, ArcLayer, IconLayer } from "@deck.gl/layers";
+import { ScatterplotLayer, IconLayer, PathLayer } from "@deck.gl/layers";
 import { H3HexagonLayer } from "@deck.gl/geo-layers";
 
 type Pos = { id: string; lat: number; lng: number; ts: number; type?: string; hdg?: number; callsign?: string; country?: string; altM?: number; velMps?: number; vRateMps?: number };
-type Track = { fromLng: number; fromLat: number; toLng: number; toLat: number; t0: number; t1: number };
+type Track = { fromLng: number; fromLat: number; toLng: number; toLat: number; t0: number; t1: number; seen: number };
 type Air = Track & { hdg: number; callsign: string; country: string; altM: number; velMps: number; vRateMps: number };
-type Trip = { reqId: string; driver: string; dLat: number; dLng: number; rLat: number; rLng: number; t0: number; durMs: number };
+type Trip = { reqId: string; driver: string; dLat: number; dLng: number; rLat: number; rLng: number; t0: number; durMs: number; route?: [number, number][]; segLen?: number[]; total?: number };
 type Wait = { lng: number; lat: number; t0: number };
 type Query = { cells: string[]; matched: Set<string>; center: [number, number] | null };
 
@@ -154,13 +154,23 @@ export function App() {
           waiting.set(m.reqId, { lng: m.riderLng, lat: m.riderLat, t0: performance.now() });
         } else if (m.event === "assigned") {
           waiting.delete(m.reqId);
-          trips.set(m.reqId, { reqId: m.reqId, driver: m.driver, dLat: m.driverLat, dLng: m.driverLng, rLat: m.riderLat, rLng: m.riderLng, t0: performance.now(), durMs: m.durMs });
+          const trip: Trip = { reqId: m.reqId, driver: m.driver, dLat: m.driverLat, dLng: m.driverLng, rLat: m.riderLat, rLng: m.riderLng, t0: performance.now(), durMs: m.durMs };
+          // Precompute cumulative segment lengths of the pickup route for
+          // constant-speed animation along real streets (fallback: straight line).
+          const route: [number, number][] = (m.route && m.route.length >= 2) ? m.route : [[m.driverLng, m.driverLat], [m.riderLng, m.riderLat]];
+          const segLen: number[] = []; let total = 0;
+          for (let i = 1; i < route.length; i++) {
+            const d = Math.hypot(route[i][0] - route[i - 1][0], route[i][1] - route[i - 1][1]);
+            total += d; segLen.push(total);
+          }
+          trip.route = route; trip.segLen = segLen; trip.total = total;
+          trips.set(m.reqId, trip);
         } else if (m.event === "completed") {
           const t = trips.get(m.reqId);
           trips.delete(m.reqId);
           // Snap the driver to the drop-off (rider) so it resumes from there
           // instead of teleporting to wherever the simulator drifted it.
-          if (t) tracks.set(t.driver, { fromLng: t.rLng, fromLat: t.rLat, toLng: t.rLng, toLat: t.rLat, t0: performance.now(), t1: performance.now() + 1000 });
+          if (t) tracks.set(t.driver, { fromLng: t.rLng, fromLat: t.rLat, toLng: t.rLng, toLat: t.rLat, t0: performance.now(), t1: performance.now() + 1000, seen: performance.now() });
         } else if (m.event === "unmatched") {
           waiting.set(m.reqId, { lng: m.riderLng, lat: m.riderLat, t0: performance.now() });
         }
@@ -170,11 +180,11 @@ export function App() {
       const now = performance.now();
       if (p.type === "aircraft") {
         const prev = aircraft.get(p.id);
-        aircraft.set(p.id, { fromLng: prev?.toLng ?? p.lng, fromLat: prev?.toLat ?? p.lat, toLng: p.lng, toLat: p.lat, t0: now, t1: now + 12000, hdg: p.hdg ?? 0, callsign: p.callsign || "", country: p.country || "", altM: p.altM || 0, velMps: p.velMps || 0, vRateMps: p.vRateMps || 0 });
+        aircraft.set(p.id, { fromLng: prev?.toLng ?? p.lng, fromLat: prev?.toLat ?? p.lat, toLng: p.lng, toLat: p.lat, t0: now, t1: now + 12000, seen: now, hdg: p.hdg ?? 0, callsign: p.callsign || "", country: p.country || "", altM: p.altM || 0, velMps: p.velMps || 0, vRateMps: p.vRateMps || 0 });
         return;
       }
       const prev = tracks.get(p.id);
-      tracks.set(p.id, { fromLng: prev?.toLng ?? p.lng, fromLat: prev?.toLat ?? p.lat, toLng: p.lng, toLat: p.lat, t0: now, t1: now + 1000 });
+      tracks.set(p.id, { fromLng: prev?.toLng ?? p.lng, fromLat: prev?.toLat ?? p.lat, toLng: p.lng, toLat: p.lat, t0: now, t1: now + 1000, seen: now });
     };
 
     let raf = 0;
@@ -183,10 +193,27 @@ export function App() {
       const onTrip = new Set([...trips.values()].map((t) => t.driver));
       const lerp = (t: Track) => { const a = Math.min(1, (now - t.t0) / (t.t1 - t.t0)); return [t.fromLng + (t.toLng - t.fromLng) * a, t.fromLat + (t.toLat - t.fromLat) * a]; };
 
+      // Expire stale drivers (simulator scaled down / driver offline): drop those
+      // not seen in 6s so decreasing the slider reflects immediately, matching the
+      // server-side liveness filter.
+      for (const [id, t] of tracks) { if (now - t.seen > 6000) tracks.delete(id); }
+
       const drivers = [...tracks.entries()].filter(([id]) => !onTrip.has(id)).map(([id, t]) => ({ id, position: lerp(t), matched: query.matched.has(id) }));
       setCount(tracks.size);
       const tripList = [...trips.values()];
-      const markers = tripList.map((t) => { const a = Math.min(1, (now - t.t0) / t.durMs); return { position: [t.dLng + (t.rLng - t.dLng) * a, t.dLat + (t.rLat - t.dLat) * a] }; });
+      // Animate the on-trip car along the real pickup route at constant speed.
+      const routePos = (t: Trip) => {
+        const a = Math.min(1, (now - t.t0) / t.durMs);
+        const r = t.route!, seg = t.segLen!, total = t.total!;
+        if (total <= 0 || r.length < 2) return [t.dLng, t.dLat];
+        const target = a * total;
+        let i = 0; while (i < seg.length && seg[i] < target) i++;
+        const segStart = i === 0 ? 0 : seg[i - 1];
+        const segFrac = (target - segStart) / ((seg[i] ?? total) - segStart || 1);
+        const p0 = r[i], p1 = r[i + 1] ?? r[i];
+        return [p0[0] + (p1[0] - p0[0]) * segFrac, p0[1] + (p1[1] - p0[1]) * segFrac];
+      };
+      const markers = tripList.map((t) => ({ position: routePos(t) }));
       const airList = [...aircraft.entries()].map(([id, a]) => ({ kind: "aircraft", id, position: lerp(a), hdg: a.hdg, callsign: a.callsign, country: a.country, altM: a.altM, velMps: a.velMps, vRateMps: a.vRateMps }));
 
       // Expire stale waiting riders (unmatched linger, then fade after 15s).
@@ -206,7 +233,8 @@ export function App() {
         if (query.cells.length) {
           layers.push(new H3HexagonLayer({ id: "disk", data: query.cells, getHexagon: (d: string) => d, filled: true, stroked: true, extruded: false, getFillColor: [137, 220, 235, 18], getLineColor: [137, 220, 235, 110], lineWidthMinPixels: 1 }));
         }
-        layers.push(new ArcLayer({ id: "arcs", data: tripList, getSourcePosition: (t: Trip) => [t.dLng, t.dLat], getTargetPosition: (t: Trip) => [t.rLng, t.rLat], getSourceColor: [245, 194, 231], getTargetColor: [249, 226, 175], getWidth: 2, getHeight: 0.3 }));
+        // pickup route along real streets (path the car follows to the rider)
+        layers.push(new PathLayer({ id: "routes", data: tripList, getPath: (t: Trip) => t.route!, getColor: [245, 194, 231, 150], getWidth: 3, widthUnits: "pixels", capRounded: true, jointRounded: true }));
         // waiting riders (unassigned): pulsing halo + pin
         layers.push(new ScatterplotLayer({
           id: "waiting-halo", data: waitList, getPosition: (d: any) => d.position,

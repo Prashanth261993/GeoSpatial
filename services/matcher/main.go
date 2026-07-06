@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"math"
@@ -27,6 +28,7 @@ var (
 	rdb        *redis.Client
 	prod       *kgo.Client
 	nearbyURL  string
+	osrmURL    string
 	radiusM    float64 = 2500
 	lockTTL            = 30 * time.Second
 	httpClient         = &http.Client{Timeout: 3 * time.Second}
@@ -61,6 +63,7 @@ type tripEvent struct {
 	RiderLng   float64 `json:"riderLng"`
 	PickupDist float64 `json:"pickupDist"`
 	DurMs      int64   `json:"durMs"`
+	Route      [][2]float64 `json:"route,omitempty"` // driver->rider pickup polyline [lng,lat]
 	Ts         int64   `json:"ts"`
 }
 
@@ -70,6 +73,7 @@ var batchCh = make(chan request, 4096)
 func main() {
 	mode = env("MATCH_MODE", "greedy")
 	nearbyURL = env("NEARBY_URL", "http://localhost:8100/nearby")
+	osrmURL = env("OSRM_URL", "")
 	rdb = redis.NewClient(&redis.Options{Addr: env("REDIS_ADDR", "localhost:6379")})
 	if err := rdb.Ping(context.Background()).Err(); err != nil {
 		log.Fatalf("redis: %v", err)
@@ -232,7 +236,7 @@ func assign(ctx context.Context, req request, d nearbyDriver) {
 	ev := tripEvent{
 		Kind: "trip", Event: "assigned", ReqID: req.ReqID, Driver: d.ID,
 		DriverLat: d.Lat, DriverLng: d.Lng, RiderLat: req.Lat, RiderLng: req.Lng,
-		PickupDist: d.Dist, DurMs: dur, Ts: time.Now().UnixMilli(),
+		PickupDist: d.Dist, DurMs: dur, Route: pickupRoute(d.Lat, d.Lng, req.Lat, req.Lng), Ts: time.Now().UnixMilli(),
 	}
 	publish(ctx, ev)
 
@@ -255,6 +259,43 @@ func publish(ctx context.Context, ev tripEvent) {
 		key = ev.ReqID
 	}
 	bus.Produce(ctx, prod, bus.TopicTrips, key, b)
+}
+
+// pickupRoute asks OSRM for the road route driver->rider so the map animates the
+// pickup along real streets instead of a straight line over buildings/water.
+// Returns nil on any failure; the frontend falls back to a straight line.
+func pickupRoute(dLat, dLng, rLat, rLng float64) [][2]float64 {
+	if osrmURL == "" {
+		return nil
+	}
+	url := fmt.Sprintf("%s/route/v1/driving/%f,%f;%f,%f?overview=full&geometries=geojson", osrmURL, dLng, dLat, rLng, rLat)
+	resp, err := httpClient.Get(url)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var out struct {
+		Routes []struct {
+			Geometry struct {
+				Coordinates [][]float64 `json:"coordinates"`
+			} `json:"geometry"`
+		} `json:"routes"`
+	}
+	if json.Unmarshal(body, &out) != nil || len(out.Routes) == 0 {
+		return nil
+	}
+	c := out.Routes[0].Geometry.Coordinates
+	pts := make([][2]float64, 0, len(c))
+	for _, p := range c {
+		if len(p) == 2 {
+			pts = append(pts, [2]float64{p[0], p[1]})
+		}
+	}
+	if len(pts) < 2 {
+		return nil
+	}
+	return pts
 }
 
 func fetchNearby(lat, lng float64) []nearbyDriver {

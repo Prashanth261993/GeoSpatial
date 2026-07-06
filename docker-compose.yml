@@ -116,6 +116,7 @@ services:
       REDPANDA_BROKERS: redpanda:9092
       PORT: "8110"
       NEARBY_URL: http://indexer:8100/nearby
+      OSRM_URL: http://osrm:5000
       MATCH_MODE: ${MATCH_MODE:-greedy}
       BATCH_WINDOW_MS: "1000"
     ports: ["8110:8110"]
