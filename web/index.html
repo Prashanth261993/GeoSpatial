@@ -28,6 +28,13 @@
         background: #0b0e14f2; color: #cdd6f4; border: 1px solid #2a3346; border-radius: 8px;
         padding: 8px 10px; font: 12px ui-monospace, monospace; box-shadow: 0 8px 24px -8px #000; }
       #tooltip b { color: #89dceb; }
+      .tool { background: #171a24; color: #cdd6f4; border: 1px solid #2a3346; border-radius: 8px;
+        padding: 6px 10px; font: 12px ui-monospace, monospace; cursor: pointer; }
+      .tool.active { background: linear-gradient(100deg, #89dceb, #b4befe); color: #06080d; border-color: transparent; font-weight: 700; }
+      #sliders .srow { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 12px; }
+      #sliders .srow span { color: #8b93a7; width: 66px; }
+      #sliders .srow b { color: #89dceb; width: 52px; text-align: right; }
+      #sliders input[type=range] { flex: 1; accent-color: #89dceb; }
     </style>
   </head>
   <body>
@@ -44,6 +51,17 @@
         <label><input type="checkbox" id="tgl-ops" checked /> ops</label>
         <label><input type="checkbox" id="tgl-surge" /> surge</label>
         <label><input type="checkbox" id="tgl-air" /> ✈ aircraft</label>
+      </div>
+      <div id="tools" class="panel">
+        <div style="font-size:11px;letter-spacing:1px;color:#8b93a7;text-transform:uppercase;margin-bottom:6px">click tool</div>
+        <div style="display:flex;gap:6px">
+          <button id="tool-nearby" class="tool active">🔍 nearby</button>
+          <button id="tool-spawn" class="tool">🧍 spawn rider</button>
+        </div>
+      </div>
+      <div id="sliders" class="panel">
+        <div class="srow"><span>drivers</span><input type="range" id="sl-drivers" min="0" max="400" value="200" /><b id="sl-drivers-v">200</b></div>
+        <div class="srow"><span>rider rate</span><input type="range" id="sl-rate" min="100" max="3000" step="100" value="700" /><b id="sl-rate-v">700ms</b></div>
       </div>
       <div id="airbar" class="panel"><span id="air">toggle ✈ to stream real aircraft</span></div>
     </div>

@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Prashanth261993/geospatial/internal/bus"
 	"github.com/Prashanth261993/geospatial/internal/event"
@@ -91,6 +92,7 @@ func index(ctx context.Context, rdb *redis.Client, p event.Position) {
 		pipe.HSet(ctx, "geo:cell", p.ID, cell)
 	}
 	pipe.HSet(ctx, "geo:pos", p.ID, fmtPos(p.Lat, p.Lng))
+	pipe.HSet(ctx, "geo:seen", p.ID, time.Now().UnixMilli()) // liveness for stale filtering
 	pipe.Exec(ctx)
 }
 
@@ -137,14 +139,22 @@ func nearby(rdb *redis.Client) http.HandlerFunc {
 			ids = append(ids, id)
 		}
 
-		// narrow phase: exact distance filter
+		// narrow phase: exact distance filter + liveness (skip stale drivers)
 		drivers := []driver{}
 		if len(ids) > 0 {
 			vals, _ := rdb.HMGet(ctx, "geo:pos", ids...).Result()
+			seen, _ := rdb.HMGet(ctx, "geo:seen", ids...).Result()
+			nowMs := time.Now().UnixMilli()
 			for i, v := range vals {
 				s, ok := v.(string)
 				if !ok {
 					continue
+				}
+				// stale filter: driver not updated within 8s is considered offline
+				if ts, ok := seen[i].(string); ok {
+					if ms, _ := strconv.ParseInt(ts, 10, 64); nowMs-ms > 8000 {
+						continue
+					}
 				}
 				plat, plng := parsePos(s)
 				if d := spatial.DistM(lat, lng, plat, plng); d <= radius {
