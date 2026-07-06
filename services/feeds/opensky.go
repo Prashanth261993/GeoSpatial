@@ -110,11 +110,15 @@ func emit(ctx context.Context, m *manager, states [][]any) int {
 		if c, ok := s[1].(string); ok {
 			callsign = strings.TrimSpace(c)
 		}
+		country, _ := s[2].(string)
+		vel, _ := s[9].(float64)
+		vrate, _ := s[11].(float64)
+		alt, _ := s[13].(float64) // geometric altitude (m); may be null
 		p := event.Position{
 			ID: "ac-" + id, Lat: lat, Lng: lng, Ts: time.Now().UnixMilli(),
 			Type: event.TypeAircraft, Hdg: hdg,
+			Callsign: callsign, Country: country, AltM: alt, VelMps: vel, VRateMps: vrate,
 		}
-		_ = callsign
 		key, err := spatial.CellOf(lat, lng, bus.KeyRes)
 		if err != nil {
 			continue
