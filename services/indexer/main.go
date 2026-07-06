@@ -71,7 +71,12 @@ func consume(cl *kgo.Client, rdb *redis.Client) {
 
 // index applies one position update: move the id between cell Sets on a
 // transition, and refresh the latest position. Idempotent by construction.
+// Only DRIVER-type entities are indexed for proximity/matching — real-feed
+// entities (aircraft, buses) flow to the map via fanout but are never matchable.
 func index(ctx context.Context, rdb *redis.Client, p event.Position) {
+	if !p.IsDriver() {
+		return
+	}
 	cell, err := spatial.CellOf(p.Lat, p.Lng, res)
 	if err != nil {
 		return

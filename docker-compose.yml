@@ -139,6 +139,21 @@ services:
       timescale: { condition: service_healthy }
       redpanda-init: { condition: service_completed_successfully }
 
+  feeds:
+    build:
+      context: .
+      dockerfile: services/Dockerfile.cgo
+      args: { SVC: feeds }
+    environment:
+      REDPANDA_BROKERS: redpanda:9092
+      PORT: "8130"
+      OPENSKY_ENABLED: ${OPENSKY_ENABLED:-false}
+      OPENSKY_USER: ${OPENSKY_USER:-}
+      OPENSKY_PASS: ${OPENSKY_PASS:-}
+    ports: ["8130:8130"]
+    depends_on:
+      redpanda-init: { condition: service_completed_successfully }
+
   simulator:
     build:
       context: .
@@ -161,6 +176,7 @@ services:
       VITE_NEARBY_URL: ${VITE_NEARBY_URL:-http://localhost:8100/nearby}
       VITE_STATS_URL: ${VITE_STATS_URL:-http://localhost:8110/stats}
       VITE_SURGE_URL: ${VITE_SURGE_URL:-http://localhost:8120/surge}
+      VITE_FEEDS_URL: ${VITE_FEEDS_URL:-http://localhost:8130/feeds}
     ports: ["5174:5173"]
     depends_on: [ws-fanout]
 
