@@ -165,6 +165,8 @@ services:
       OSRM_URL: http://osrm:5000
       MATCHER_URL: http://matcher:8110
       RIDER_RATE_MS: "700"
+      PORT: "8140"
+    ports: ["8140:8140"]
     depends_on: [ingest-gateway, osrm, matcher]
 
   web:
@@ -177,6 +179,8 @@ services:
       VITE_STATS_URL: ${VITE_STATS_URL:-http://localhost:8110/stats}
       VITE_SURGE_URL: ${VITE_SURGE_URL:-http://localhost:8120/surge}
       VITE_FEEDS_URL: ${VITE_FEEDS_URL:-http://localhost:8130/feeds}
+      VITE_MATCHER_URL: ${VITE_MATCHER_URL:-http://localhost:8110/request}
+      VITE_SIM_URL: ${VITE_SIM_URL:-http://localhost:8140/control}
     ports: ["8899:5173"]
     depends_on: [ws-fanout]
 

@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,36 +30,107 @@ const (
 
 var ingest string
 var osrm string
+var matcherURL string
+
+var (
+	mu          sync.Mutex
+	driverCncls []context.CancelFunc // one per running driver goroutine
+	nextDriver  int
+	riderRateMs int64 = 700 // atomic-ish under mu for reads in loop; updated via control
+)
 
 func main() {
 	n, _ := strconv.Atoi(env("DRIVERS", "200"))
 	ingest = env("INGEST_URL", "http://localhost:8080") + "/loc"
 	osrm = env("OSRM_URL", "")
-	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go driver(fmt.Sprintf("d%04d", i), &wg)
+	matcherURL = env("MATCHER_URL", "")
+	if r, err := strconv.Atoi(env("RIDER_RATE_MS", "700")); err == nil {
+		riderRateMs = int64(r)
 	}
 
-	// Rider demand: periodically a rider requests a trip from the matcher.
-	if matcher := env("MATCHER_URL", ""); matcher != "" {
-		rate, _ := strconv.Atoi(env("RIDER_RATE_MS", "700"))
-		wg.Add(1)
-		go riders(matcher+"/request", time.Duration(rate)*time.Millisecond, &wg)
-		log.Printf("simulator: rider demand -> %s every %dms", matcher, rate)
+	setDrivers(n)
+
+	if matcherURL != "" {
+		go riders(matcherURL + "/request")
+		log.Printf("simulator: rider demand -> %s", matcherURL)
 	}
+
+	// Control API: adjust driver count and rider rate live from the UI.
+	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
+	http.HandleFunc("/control", handleControl)
 
 	log.Printf("simulator: %d drivers -> %s (osrm=%q)", n, ingest, osrm)
-	wg.Wait()
+	log.Fatal(http.ListenAndServe(":"+env("PORT", "8140"), nil))
 }
 
-// riders emits trip requests at random Seattle locations.
-func riders(url string, every time.Duration, wg *sync.WaitGroup) {
-	defer wg.Done()
+// setDrivers scales the running driver goroutines up or down to reach target n.
+func setDrivers(n int) {
+	mu.Lock()
+	defer mu.Unlock()
+	for len(driverCncls) < n {
+		ctx, cancel := context.WithCancel(context.Background())
+		id := fmt.Sprintf("d%04d", nextDriver)
+		nextDriver++
+		driverCncls = append(driverCncls, cancel)
+		go driver(ctx, id)
+	}
+	for len(driverCncls) > n {
+		last := len(driverCncls) - 1
+		driverCncls[last]() // cancel -> goroutine exits, driver goes stale in index
+		driverCncls = driverCncls[:last]
+	}
+}
+
+func handleControl(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "content-type")
+	if r.Method == http.MethodOptions {
+		return
+	}
+	if r.Method == http.MethodPost {
+		var req struct {
+			Drivers     *int `json:"drivers"`
+			RiderRateMs *int `json:"riderRateMs"`
+		}
+		if json.NewDecoder(r.Body).Decode(&req) == nil {
+			if req.Drivers != nil {
+				d := *req.Drivers
+				if d < 0 {
+					d = 0
+				}
+				if d > 1000 {
+					d = 1000
+				}
+				setDrivers(d)
+			}
+			if req.RiderRateMs != nil {
+				rr := int64(*req.RiderRateMs)
+				if rr < 50 {
+					rr = 50
+				}
+				mu.Lock()
+				riderRateMs = rr
+				mu.Unlock()
+			}
+		}
+	}
+	mu.Lock()
+	out := map[string]any{"drivers": len(driverCncls), "riderRateMs": riderRateMs}
+	mu.Unlock()
+	json.NewEncoder(w).Encode(out)
+}
+
+// riders emits trip requests at random Seattle locations at the current rider rate.
+func riders(url string) {
 	cli := &http.Client{Timeout: 5 * time.Second}
-	t := time.NewTicker(every)
 	seq := 0
-	for range t.C {
+	for {
+		mu.Lock()
+		rate := riderRateMs
+		mu.Unlock()
+		time.Sleep(time.Duration(rate) * time.Millisecond)
 		seq++
 		lat := centerLat + (rand.Float64()-0.5)*spread
 		lng := centerLng + (rand.Float64()-0.5)*spread
@@ -72,16 +144,21 @@ func riders(url string, every time.Duration, wg *sync.WaitGroup) {
 	}
 }
 
-func driver(id string, wg *sync.WaitGroup) {
-	defer wg.Done()
+func driver(ctx context.Context, id string) {
 	lat := centerLat + (rand.Float64()-0.5)*spread
 	lng := centerLng + (rand.Float64()-0.5)*spread
 	cli := &http.Client{Timeout: 5 * time.Second}
 	t := time.NewTicker(time.Second)
+	defer t.Stop()
 	var route [][2]float64
 	ri := 0
 	tgtLat, tgtLng := pick()
-	for range t.C {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
 		if osrm != "" {
 			if route == nil || ri >= len(route) {
 				if r := fetchRoute(cli, lat, lng); r != nil {

@@ -21,6 +21,8 @@ const NEARBY = (import.meta.env.VITE_NEARBY_URL as string) || "http://localhost:
 const STATS = (import.meta.env.VITE_STATS_URL as string) || "http://localhost:8110/stats";
 const SURGE = (import.meta.env.VITE_SURGE_URL as string) || "http://localhost:8120/surge";
 const FEEDS = (import.meta.env.VITE_FEEDS_URL as string) || "http://localhost:8130/feeds";
+const MATCHER = (import.meta.env.VITE_MATCHER_URL as string) || "http://localhost:8110/request";
+const SIM = (import.meta.env.VITE_SIM_URL as string) || "http://localhost:8140/control";
 const RADIUS = 1200;
 
 function surgeColor(m: number): [number, number, number] {
@@ -65,6 +67,7 @@ export function App() {
     const query: Query = { cells: [], matched: new Set(), center: null };
     let surgeZones: { cell: string; surge: number }[] = [];
     const show = { ops: true, surge: false, air: false };
+    let clickTool: "nearby" | "spawn" = "nearby";
 
     const opsEl = document.getElementById("tgl-ops") as HTMLInputElement;
     const surgeEl = document.getElementById("tgl-surge") as HTMLInputElement;
@@ -80,6 +83,39 @@ export function App() {
       if (!airEl.checked) aircraft.clear();
     });
 
+    // Click-tool selector: nearby query vs spawn a rider.
+    const toolNearby = document.getElementById("tool-nearby") as HTMLButtonElement;
+    const toolSpawn = document.getElementById("tool-spawn") as HTMLButtonElement;
+    const setTool = (t: "nearby" | "spawn") => {
+      clickTool = t;
+      toolNearby?.classList.toggle("active", t === "nearby");
+      toolSpawn?.classList.toggle("active", t === "spawn");
+      setNear(t === "spawn" ? "click the map to spawn a rider" : "click the map to find nearby drivers");
+    };
+    toolNearby?.addEventListener("click", () => setTool("nearby"));
+    toolSpawn?.addEventListener("click", () => setTool("spawn"));
+
+    // Sliders: live-control driver count and rider rate via the simulator.
+    const drvEl = document.getElementById("sl-drivers") as HTMLInputElement;
+    const rateEl = document.getElementById("sl-rate") as HTMLInputElement;
+    let ctlTimer: any;
+    const pushControl = () => {
+      clearTimeout(ctlTimer);
+      ctlTimer = setTimeout(() => {
+        fetch(SIM, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ drivers: +drvEl.value, riderRateMs: +rateEl.value }) }).catch(() => {});
+      }, 200);
+    };
+    drvEl?.addEventListener("input", () => { setText("sl-drivers-v", drvEl.value); pushControl(); });
+    rateEl?.addEventListener("input", () => { setText("sl-rate-v", rateEl.value + "ms"); pushControl(); });
+
+    const spawnRider = async (lng: number, lat: number) => {
+      query.center = [lng, lat];
+      try {
+        await fetch(MATCHER, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ reqId: `ui-${Date.now()}`, lat, lng }) });
+        setNear(`spawned a rider — watch for a match`);
+      } catch { setNear("spawn failed — is the matcher up?"); }
+    };
+
     const runQuery = async (lng: number, lat: number) => {
       query.center = [lng, lat];
       try {
@@ -91,7 +127,12 @@ export function App() {
       } catch { setNear("query failed — is the indexer up?"); }
     };
     deck.setProps({
-      onClick: (info: any) => { if (info?.coordinate && !info?.object) runQuery(info.coordinate[0], info.coordinate[1]); },
+      onClick: (info: any) => {
+        if (!info?.coordinate || info?.object) return;
+        const [lng, lat] = info.coordinate;
+        if (clickTool === "spawn") spawnRider(lng, lat);
+        else runQuery(lng, lat);
+      },
       getTooltip: (info: any) => {
         const o = info?.object;
         if (!o || o.kind !== "aircraft") return null;
