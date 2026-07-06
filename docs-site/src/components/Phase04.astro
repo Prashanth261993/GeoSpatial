@@ -1,0 +1,105 @@
+---
+const base = import.meta.env.BASE_URL;
+
+const mermaid = `flowchart LR
+  IG["ingest-gateway<br/>produce key=H3"] --> T[("positions topic<br/>12 partitions")]
+  MT["matcher<br/>produce key=H3"] --> TT[("trips topic<br/>6 partitions")]
+  T -->|"group: indexer<br/>(work-sharing)"| IX["indexer → Redis"]
+  T -->|"unique group<br/>(fan-out)"| WS["ws-fanout"]
+  TT -->|"unique group"| WS
+  WS --> BR["browsers"]`;
+
+const codeKey = `<span class="cm">// partition key = coarse H3 cell -> an area's events land on ONE partition</span>
+key := spatial.CellOf(p.Lat, p.Lng, <span class="fn">7</span>)  <span class="cm">// res 7 ≈ neighborhood</span>
+bus.Produce(ctx, prod, <span class="st">"positions"</span>, key, payload)
+<span class="cm">// Kafka: partition = hash(key) % 12  →  same area, same consumer, in order</span>`;
+
+const codeConsume = `<span class="cm">// at-least-once: commit AFTER processing; handlers are idempotent</span>
+<span class="kw">for</span> {
+    fetches := cl.PollFetches(ctx)
+    fetches.EachRecord(<span class="kw">func</span>(rec *kgo.Record) { index(rec) }) <span class="cm">// SADD/HSET = safe to replay</span>
+    cl.CommitUncommittedOffsets(ctx)
+}`;
+---
+<section id="phase-4" class="chapter">
+  <div class="wrap">
+    <div class="reveal">
+      <span class="tag">PHASE 04 · EVENT BACKBONE</span>
+      <h2>From fire-and-forget to a replayable log</h2>
+      <p class="sub">We swap the in-process message bus for Redpanda — a real, partitioned, replayable event log — and key every event by its H3 cell. That single choice turns "who's near me" into spatial locality that makes matching parallel by geography.</p>
+    </div>
+
+    <figure class="figure reveal">
+      <img src={`${base}/img/phase4/partitions.png`} alt="Bar chart of record counts across 12 partitions showing heavy skew toward downtown cells" loading="lazy" />
+      <figcaption>The positions topic, keyed by H3 cell. Downtown neighborhoods (p4, p6, p7) carry thousands of records; water and outskirts (p0, p3, p9) sit near zero. Geographic reality becomes partition layout.</figcaption>
+    </figure>
+
+    <div class="prose reveal">
+      <div class="h3">A log, not a queue</div>
+      <p>Redis pub/sub was perfect for the early phases, but it's fire-and-forget: if a consumer is down, the message is gone. Kafka/Redpanda is a <b>distributed, append-only, replayable log</b> — think git history for events. Producers append records with monotonic offsets; topics split into <b>partitions</b> (independent ordered logs); records are <b>retained</b>, so any consumer can replay from any offset; and <b>consumer groups</b> share partitions for parallelism.</p>
+
+      <div class="h3">The move that matters: partition by H3 cell</div>
+      <p>Kafka routes a record by hashing its key. Make the key the event's H3 cell, and every event for a neighborhood lands on the same partition — and therefore the same consumer. A matcher that owns that partition sees <em>all</em> the riders and drivers in that area and can match them with <b>zero cross-instance coordination</b>. Matching becomes embarrassingly parallel by geography — the real reason we chose H3 back in Phase 2.</p>
+    </div>
+
+    <div class="code reveal">
+      <div class="bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="lang">services/ingest-gateway · produce</span></div>
+      <pre><code set:html={codeKey}></code></pre>
+    </div>
+
+    <pre class="mermaid reveal" set:html={mermaid}></pre>
+
+    <div class="prose reveal">
+      <div class="h3">Delivery you can reason about</div>
+      <p>We run <b>at-least-once with idempotent consumers</b> — what most production systems actually use, rather than the heavier exactly-once transactions. A consumer may occasionally see a record twice (it crashed before committing its offset), so processing twice must equal processing once. The indexer is idempotent by construction: its <code>SADD</code>/<code>HSET</code> operations just re-write the same cell membership. Offsets are committed <em>after</em> processing.</p>
+    </div>
+
+    <div class="code reveal">
+      <div class="bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="lang">services/indexer · consume</span></div>
+      <pre><code set:html={codeConsume}></code></pre>
+    </div>
+
+    <div class="prose reveal">
+      <div class="h3">Backpressure is just consumer lag</div>
+      <p>Earlier, "backpressure" meant dropping frames — a toy. With a log it's the real thing: a slow consumer simply advances its offset more slowly, and its <b>lag</b> grows. Nothing is lost; the log absorbs the burst. We proved it: stopped the indexer for 12 seconds while events kept flowing, watched lag climb to 2,600, then restarted it and watched it drain to zero.</p>
+    </div>
+
+    <figure class="figure reveal">
+      <img src={`${base}/img/phase4/backpressure.png`} alt="Line chart of consumer lag rising to 2600 while the consumer is down, then draining to zero after restart" loading="lazy" />
+      <figcaption>Consumer lag over time: the indexer is stopped (lag climbs to 2,600 buffered records), then restarted (lag drains to 0). No messages lost — they were retained in the log and replayed on recovery.</figcaption>
+    </figure>
+
+    <div class="callout reveal"><b>The superpower Redis pub/sub can't match:</b> because records are retained, we replayed <b>17,200</b> historical positions from offset zero. That enables rebuilding state after a schema change, backfilling a brand-new consumer, and time-travel debugging — none of which fire-and-forget messaging can do.</div>
+
+    <div class="prose reveal">
+      <div class="h3">Fan-out vs work-sharing — chosen by one line</div>
+      <p>The same topic is consumed two opposite ways. The indexer joins a <em>shared</em> group so partitions split across instances and each record is processed once (scale by adding instances). Each ws-fanout instance uses a <em>unique</em> group so it receives every record and can push to its own browsers. Work-sharing or fan-out is decided entirely by the consumer-group id.</p>
+    </div>
+
+    <div class="reveal">
+      <div class="h3">Tradeoffs</div>
+      <table class="tbl">
+        <thead><tr><th>Decision</th><th>Chose</th><th>Rejected</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td>Backbone</td><td class="pick">Redpanda log</td><td class="drop">Redis pub/sub</td><td>replay, ordering, partitioning, backpressure</td></tr>
+          <tr><td>Partition key</td><td class="pick">H3 cell (res 7)</td><td class="drop">driver id / random</td><td>spatial locality → parallel matching</td></tr>
+          <tr><td>Delivery</td><td class="pick">at-least-once + idempotent</td><td class="drop">exactly-once txns</td><td>simpler, what production runs</td></tr>
+          <tr><td>Fanout consumption</td><td class="pick">unique group, live tail</td><td class="drop">shared group</td><td>every instance needs every record</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <figure class="figure reveal">
+      <img src={`${base}/img/phase4/live.png`} alt="The live map still running end to end, now backed by Redpanda" loading="lazy" />
+      <figcaption>Same rich UI — drivers, trip arcs, live stats — now driven entirely through the Redpanda backbone. The backend changed underneath with zero regression on screen.</figcaption>
+    </figure>
+
+    <div class="prose reveal">
+      <div class="h3">The cost we accept: hot partitions</div>
+      <p>Spatial keying means downtown partitions carry far more load than the suburbs — visible skew in the chart above. That's the honest tradeoff of locality. At scale you'd salt the hottest cells across partitions, add partitions, or split per-region topics. We accept the skew here for the locality win and document the mitigations.</p>
+
+      <div class="h3">What's next</div>
+      <p><b>Phase 5 — surge analytics.</b> With events flowing through a partitioned log, we compute demand density over sliding spatial-time windows and render a live surge heatmap — the aggregation layer that pricing and driver-incentive systems are built on.</p>
+    </div>
+  </div>
+</section>

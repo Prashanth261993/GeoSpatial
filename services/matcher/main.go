@@ -16,14 +16,16 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Prashanth261993/geospatial/internal/bus"
 	"github.com/Prashanth261993/geospatial/internal/match"
+	"github.com/Prashanth261993/geospatial/internal/spatial"
 	"github.com/redis/go-redis/v9"
+	"github.com/twmb/franz-go/pkg/kgo"
 )
-
-const tripChannel = "trips"
 
 var (
 	rdb        *redis.Client
+	prod       *kgo.Client
 	nearbyURL  string
 	radiusM    float64 = 2500
 	lockTTL            = 30 * time.Second
@@ -72,6 +74,12 @@ func main() {
 	if err := rdb.Ping(context.Background()).Err(); err != nil {
 		log.Fatalf("redis: %v", err)
 	}
+	var err error
+	prod, err = bus.NewProducer(bus.Brokers(env("REDPANDA_BROKERS", "localhost:19092")))
+	if err != nil {
+		log.Fatalf("kafka: %v", err)
+	}
+	defer prod.Close()
 	if mode == "optimal" {
 		go batchLoop()
 	}
@@ -221,7 +229,12 @@ func assign(ctx context.Context, req request, d nearbyDriver) {
 
 func publish(ctx context.Context, ev tripEvent) {
 	b, _ := json.Marshal(ev)
-	rdb.Publish(ctx, tripChannel, b)
+	// Key trips by the rider's coarse H3 cell for spatial locality on the topic.
+	key, err := spatial.CellOf(ev.RiderLat, ev.RiderLng, bus.KeyRes)
+	if err != nil {
+		key = ev.ReqID
+	}
+	bus.Produce(ctx, prod, bus.TopicTrips, key, b)
 }
 
 func fetchNearby(lat, lng float64) []nearbyDriver {
