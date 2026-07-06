@@ -11,9 +11,9 @@
 | 4 | Redpanda backbone: partition by H3, idempotency, backpressure | ✅ Done |
 | 5 | Surge analytics: windowed spatial aggregation + heatmap | ✅ Done |
 | 6 | Real-feed toggle (OpenSky / GTFS-RT) → MVP demoable | ✅ Done |
-| 7 | Observability: Prometheus/Grafana, traces | ⬜ Next |
-| 8 | Rust hot path (matcher/indexer), measured | ⬜ |
-| 9 | Cinematic frontend: custom shaders, trails, surge ripple | ⬜ |
+| 7 | Cinematic frontend: /cinematic page — shaders, trails, glow | ⬜ Next |
+| 8 | Observability: Prometheus/Grafana, traces | ⬜ |
+| 9 | Rust hot path (matcher/indexer), measured | ⬜ |
 | 10 | Free-cloud deploy + CDN (final system only) | ⬜ |
 
 Architecture: Go microservices · Redpanda · Redis · TimescaleDB · OSRM · React/deck.gl (Rust later).
