@@ -17,7 +17,14 @@ const STYLE = KEY
 const WS = (import.meta.env.VITE_WS_URL as string) || "ws://localhost:8090/ws";
 const NEARBY = (import.meta.env.VITE_NEARBY_URL as string) || "http://localhost:8100/nearby";
 const STATS = (import.meta.env.VITE_STATS_URL as string) || "http://localhost:8110/stats";
+const SURGE = (import.meta.env.VITE_SURGE_URL as string) || "http://localhost:8120/surge";
 const RADIUS = 1200;
+
+// surge multiplier (1..3) -> RGB (calm cyan -> hot magenta/red)
+function surgeColor(m: number): [number, number, number] {
+  const t = Math.min(1, Math.max(0, (m - 1) / 2)); // 1x..3x -> 0..1
+  return [Math.round(80 + 175 * t), Math.round(200 - 140 * t), Math.round(235 - 160 * t)];
+}
 
 export function App() {
   const ref = useRef<HTMLDivElement>(null);
@@ -42,6 +49,14 @@ export function App() {
     const tracks = new Map<string, Track>();
     const trips = new Map<string, Trip>();
     const query: Query = { cells: [], matched: new Set(), center: null };
+    let surgeZones: { cell: string; surge: number }[] = [];
+    const show = { ops: true, surge: false };
+
+    // layer toggles
+    const opsEl = document.getElementById("tgl-ops") as HTMLInputElement;
+    const surgeEl = document.getElementById("tgl-surge") as HTMLInputElement;
+    opsEl?.addEventListener("change", () => { show.ops = opsEl.checked; });
+    surgeEl?.addEventListener("change", () => { show.surge = surgeEl.checked; });
 
     const runQuery = async (lng: number, lat: number) => {
       query.center = [lng, lat];
@@ -97,6 +112,21 @@ export function App() {
       });
 
       const layers: any[] = [];
+
+      // Surge heatmap (toggle): 3D extruded H3 zones, color+height by multiplier.
+      if (show.surge && surgeZones.length) {
+        layers.push(new H3HexagonLayer({
+          id: "surge", data: surgeZones, getHexagon: (d: any) => d.cell,
+          extruded: true, filled: true, wireframe: false,
+          elevationScale: 1,
+          getElevation: (d: any) => (d.surge - 1) * 900, // 1x=flat, 3x=~1800m
+          getFillColor: (d: any) => [...surgeColor(d.surge), 180] as any,
+          opacity: 0.75, pickable: false,
+          updateTriggers: { getElevation: surgeZones, getFillColor: surgeZones },
+        }));
+      }
+
+      if (show.ops) {
       if (query.cells.length) {
         layers.push(new H3HexagonLayer({
           id: "disk", data: query.cells, getHexagon: (d: string) => d,
@@ -141,6 +171,7 @@ export function App() {
           stroked: true, getLineColor: [255, 255, 255], lineWidthMinPixels: 2,
         }));
       }
+      }
       deck.setProps({ layers });
       raf = requestAnimationFrame(tick);
     };
@@ -157,7 +188,16 @@ export function App() {
       } catch {}
     }, 1000);
 
-    return () => { cancelAnimationFrame(raf); clearInterval(poll); ws.close(); deck.finalize(); map.remove(); };
+    // surge poll (only fetch when the layer is on)
+    const surgePoll = setInterval(async () => {
+      if (!show.surge) return;
+      try {
+        const j = await (await fetch(SURGE)).json();
+        surgeZones = j.zones ?? [];
+      } catch {}
+    }, 2000);
+
+    return () => { cancelAnimationFrame(raf); clearInterval(poll); clearInterval(surgePoll); ws.close(); deck.finalize(); map.remove(); };
   }, []);
 
   useEffect(() => { document.getElementById("count")!.textContent = String(count); }, [count]);

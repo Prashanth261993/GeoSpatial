@@ -14,6 +14,7 @@ import (
 const (
 	TopicPositions = "positions"
 	TopicTrips     = "trips"
+	TopicRequests  = "requests"
 	// KeyRes is the H3 resolution used ONLY for partition keying (neighborhood
 	// scale). Decoupled from the indexer's finer indexing resolution.
 	KeyRes = 7

@@ -1,0 +1,103 @@
+---
+const base = import.meta.env.BASE_URL;
+
+const mermaid = `flowchart LR
+  RQ["requests topic<br/>(H3-keyed)"] --> SG["surge service"]
+  SG -->|"30×10s sub-buckets"| WIN["5-min sliding<br/>window per zone"]
+  IX[("driver index<br/>res9 Sets")] -->|"H3 rollup"| SG
+  WIN --> M["multiplier =<br/>f(demand/supply)"]
+  M --> R[("Redis surge:cell<br/>live map")]
+  M --> TS[("TimescaleDB<br/>surge_windows")]`;
+
+const codeWindow = `<span class="cm">// hopping window from sub-buckets: O(1) advance, smooth output</span>
+zone.demand[currentSlot]++              <span class="cm">// a request arrives</span>
+<span class="cm">// each 10s tick:</span>
+zone.demand[slotAboutToReuse] = 0       <span class="cm">// evict oldest</span>
+demand := sum(zone.demand)              <span class="cm">// Σ 30 slots = last 5 min</span>`;
+
+const codeSurge = `<span class="cm">// supply via H3 rollup: res-7 zone → its res-9 index cells</span>
+children := h3.Children(zone, <span class="fn">9</span>)
+supply   := Σ SCARD(<span class="st">"h3:"</span>+child)   <span class="cm">// drivers in the zone</span>
+
+<span class="cm">// bounded, smooth surge multiplier</span>
+m := clamp(<span class="fn">1</span> + <span class="fn">0.6</span>*(demand/supply - <span class="fn">1</span>), <span class="fn">1</span>, <span class="fn">3</span>)`;
+---
+<section id="phase-5" class="chapter">
+  <div class="wrap">
+    <div class="reveal">
+      <span class="tag">PHASE 05 · SURGE ANALYTICS</span>
+      <h2>Turning a firehose into a live surge map</h2>
+      <p class="sub">This is where the system becomes analytics: aggregate the event stream into demand-vs-supply per neighborhood, over a rolling window, and render it as a 3D surge heatmap — the layer pricing and driver incentives are built on.</p>
+    </div>
+
+    <figure class="figure reveal">
+      <img src={`${base}/img/phase5/surge.gif`} alt="3D extruded H3 surge heatmap over Seattle: tall red zones surging, flat blue zones calm" loading="lazy" />
+      <figcaption>Live surge over Seattle. Each hexagon is an H3 res-7 zone; height and color encode the surge multiplier — tall/red where demand outstrips supply, flat/blue where they balance. Toggle between the operations view and this analytics view.</figcaption>
+    </figure>
+
+    <div class="prose reveal">
+      <div class="h3">What surge really is</div>
+      <p>Surge pricing is a real-time <b>density-imbalance detector</b>: when riders outnumber available drivers in an area, price rises to ration scarce supply and pull more drivers in. So the computation is a ratio — <em>demand ÷ supply, per area, over a recent window</em>. Simple to state; the interesting parts are <b>which area</b> and <b>which window</b>.</p>
+
+      <div class="h3">Spatial aggregation: index fine, aggregate coarse</div>
+      <p>Matching worked at H3 res 9 (city blocks), but you price a <em>neighborhood</em>, not a block — so surge aggregates at res 7 (~5 km²). H3's parent/child hierarchy makes this free: to count supply in a zone, we sum the res-9 driver sets that roll up into it. One spatial hierarchy serves both the fine index and the coarse analytics.</p>
+    </div>
+
+    <pre class="mermaid reveal" set:html={mermaid}></pre>
+
+    <div class="prose reveal">
+      <div class="h3">Time windows: why "the last 5 minutes" is hard</div>
+      <p>A stream is infinite — you can't just say "the last 5 minutes" without a strategy. Tumbling (fixed) windows would make surge jump at every boundary. We use a <b>sliding window</b> built from small sub-buckets: each zone keeps a ring of 30 × 10-second slots. A request tallies into the current slot; every tick we evict the oldest slot and sum the rest. Advancing is O(1), the output is smooth, and it's exactly how streaming engines implement hopping windows internally — here, by hand.</p>
+    </div>
+
+    <div class="code reveal">
+      <div class="bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="lang">services/surge · sliding window</span></div>
+      <pre><code set:html={codeWindow}></code></pre>
+    </div>
+
+    <div class="prose reveal">
+      <div class="h3">Demand must include what you couldn't serve</div>
+      <p>The subtle-but-critical choice: demand comes from a dedicated <b>requests topic</b> that captures <em>every</em> rider request — including the ones no driver was available for. Unmet demand is precisely the scarcity signal surge exists to detect; measuring only successful matches would hide it. Supply is the live count of available drivers in the zone.</p>
+    </div>
+
+    <div class="code reveal">
+      <div class="bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="lang">services/surge · supply + multiplier</span></div>
+      <pre><code set:html={codeSurge}></code></pre>
+    </div>
+
+    <figure class="figure reveal">
+      <img src={`${base}/img/phase5/surge-curve.png`} alt="Line chart of surge multiplier versus demand/supply ratio, clamped at 3x" loading="lazy" />
+      <figcaption>The transfer function. Balanced zones sit at 1.0x. When we fired a 240-request spike into one neighborhood, its ratio hit 46 requests to 2 drivers and surge saturated at the 3.0x cap — verified in the persisted history.</figcaption>
+    </figure>
+
+    <div class="prose reveal">
+      <div class="h3">Two stores, two access patterns</div>
+      <p>The current multiplier lives in Redis — a hot read the map polls. The full history is written to a <b>TimescaleDB hypertable</b>, which auto-partitions by time so "surge over the last hour" or per-zone trends stay fast as data grows. Right tool per job: Redis for now, Timescale for history. (This is the first real use of the database we provisioned back in Phase 0.)</p>
+    </div>
+
+    <figure class="figure reveal">
+      <img src={`${base}/img/phase5/heatmap3d.png`} alt="Tilted 3D view of surge zones as extruded hexagon columns" loading="lazy" />
+      <figcaption>Tilt the camera and the surge zones rise as 3D columns — an ops-dashboard view of where the city is heating up, layered over the same live map of drivers and trips.</figcaption>
+    </figure>
+
+    <div class="callout reveal"><b>Parallel by geography, again.</b> Because the requests topic is keyed by the same H3 cell, a zone's demand always lands on one consumer — so surge, like matching, scales by adding consumers with zero cross-instance coordination. The Phase 4 partitioning keeps paying off.</div>
+
+    <div class="reveal">
+      <div class="h3">Tradeoffs</div>
+      <table class="tbl">
+        <thead><tr><th>Decision</th><th>Chose</th><th>Rejected</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td>Window</td><td class="pick">sliding (sub-buckets)</td><td class="drop">tumbling</td><td>smooth surge, no boundary flicker</td></tr>
+          <tr><td>Zone size</td><td class="pick">H3 res 7</td><td class="drop">res 9 (match res)</td><td>price neighborhoods, not blocks</td></tr>
+          <tr><td>Demand source</td><td class="pick">requests topic</td><td class="drop">reuse trips</td><td>capture unmet demand</td></tr>
+          <tr><td>History store</td><td class="pick">TimescaleDB</td><td class="drop">Redis only</td><td>time-series queries + retention</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose reveal">
+      <div class="h3">What's next</div>
+      <p><b>Phase 6 — real-data integrations.</b> We wire in live feeds (aircraft via OpenSky, transit via GTFS-realtime) behind a toggle, proving the ingest and indexing pipeline scales to thousands of <em>actual</em> moving entities — the MVP-demoable milestone.</p>
+    </div>
+  </div>
+</section>

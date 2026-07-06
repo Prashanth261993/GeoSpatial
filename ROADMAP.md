@@ -9,8 +9,8 @@
 | 2 | H3 indexing + "who's near me" (radius/nearest) | ✅ Done |
 | 3 | Matching engine: greedy, locking, no double-assign | ✅ Done |
 | 4 | Redpanda backbone: partition by H3, idempotency, backpressure | ✅ Done |
-| 5 | Surge analytics: windowed spatial aggregation + heatmap | ⬜ Next |
-| 6 | Real-feed toggle (OpenSky / GTFS-RT) → MVP demoable | ⬜ |
+| 5 | Surge analytics: windowed spatial aggregation + heatmap | ✅ Done |
+| 6 | Real-feed toggle (OpenSky / GTFS-RT) → MVP demoable | ⬜ Next |
 | 7 | Observability: Prometheus/Grafana, traces | ⬜ |
 | 8 | Rust hot path (matcher/indexer), measured | ⬜ |
 | 9 | Cinematic frontend: custom shaders, trails, surge ripple | ⬜ |
