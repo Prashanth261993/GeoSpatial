@@ -105,6 +105,13 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := context.Background()
 
+	// Emit every rider request to the requests topic (captures ALL demand,
+	// including requests that won't be matched — the strongest surge signal).
+	if key, err := spatial.CellOf(req.Lat, req.Lng, bus.KeyRes); err == nil {
+		body, _ := json.Marshal(map[string]any{"reqId": req.ReqID, "lat": req.Lat, "lng": req.Lng, "ts": time.Now().UnixMilli()})
+		bus.Produce(ctx, prod, bus.TopicRequests, key, body)
+	}
+
 	// idempotency: a repeated reqId returns the existing assignment.
 	if existing, _ := rdb.HGet(ctx, "req:assigned", req.ReqID).Result(); existing != "" {
 		writeJSON(w, map[string]any{"reqId": req.ReqID, "driver": existing, "idempotent": true})

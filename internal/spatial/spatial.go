@@ -47,3 +47,18 @@ func DiskCells(lat, lng float64, res int, radiusM float64) ([]string, error) {
 func DistM(aLat, aLng, bLat, bLng float64) float64 {
 	return h3.GreatCircleDistanceM(h3.LatLng{Lat: aLat, Lng: aLng}, h3.LatLng{Lat: bLat, Lng: bLng})
 }
+
+// Children returns the res-`childRes` cells contained in a parent cell string.
+// Used to roll a coarse surge zone down to the finer indexing cells.
+func Children(parent string, childRes int) ([]string, error) {
+	c := h3.CellFromString(parent)
+	kids, err := c.Children(childRes)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(kids))
+	for i, k := range kids {
+		out[i] = h3.CellToString(k)
+	}
+	return out, nil
+}

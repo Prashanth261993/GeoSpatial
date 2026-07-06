@@ -59,6 +59,7 @@ services:
       - >
         rpk topic create positions -p 12 -r 1 --brokers redpanda:9092 || true;
         rpk topic create trips -p 6 -r 1 --brokers redpanda:9092 || true;
+        rpk topic create requests -p 12 -r 1 --brokers redpanda:9092 || true;
         echo topics ready
     depends_on:
       redpanda: { condition: service_healthy }
@@ -122,6 +123,22 @@ services:
       redis: { condition: service_healthy }
       redpanda-init: { condition: service_completed_successfully }
 
+  surge:
+    build:
+      context: .
+      dockerfile: services/Dockerfile.cgo
+      args: { SVC: surge }
+    environment:
+      REDIS_ADDR: redis:6379
+      REDPANDA_BROKERS: redpanda:9092
+      POSTGRES_DSN: postgres://geo:geo_dev_pw@timescale:5432/geo
+      PORT: "8120"
+    ports: ["8120:8120"]
+    depends_on:
+      redis: { condition: service_healthy }
+      timescale: { condition: service_healthy }
+      redpanda-init: { condition: service_completed_successfully }
+
   simulator:
     build:
       context: .
@@ -143,6 +160,7 @@ services:
       VITE_WS_URL: ${VITE_WS_URL:-ws://localhost:8090/ws}
       VITE_NEARBY_URL: ${VITE_NEARBY_URL:-http://localhost:8100/nearby}
       VITE_STATS_URL: ${VITE_STATS_URL:-http://localhost:8110/stats}
+      VITE_SURGE_URL: ${VITE_SURGE_URL:-http://localhost:8120/surge}
     ports: ["5174:5173"]
     depends_on: [ws-fanout]
 
