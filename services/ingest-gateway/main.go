@@ -1,4 +1,7 @@
-// ingest-gateway: receives driver location POSTs, writes Redis GEO, publishes pub/sub.
+// ingest-gateway: receives driver location POSTs and produces them to the
+// Redpanda "positions" topic, keyed by a coarse H3 cell so an area's events
+// land on the same partition (spatial locality). No Redis dependency: the
+// indexer owns the spatial index downstream.
 package main
 
 import (
@@ -9,21 +12,18 @@ import (
 	"os"
 	"time"
 
+	"github.com/Prashanth261993/geospatial/internal/bus"
 	"github.com/Prashanth261993/geospatial/internal/event"
-	"github.com/redis/go-redis/v9"
-)
-
-const (
-	geoKey  = "drivers"
-	channel = "positions"
+	"github.com/Prashanth261993/geospatial/internal/spatial"
 )
 
 func main() {
-	rdb := redis.NewClient(&redis.Options{Addr: env("REDIS_ADDR", "localhost:6379")})
-	ctx := context.Background()
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		log.Fatalf("redis: %v", err)
+	brokers := bus.Brokers(env("REDPANDA_BROKERS", "localhost:19092"))
+	prod, err := bus.NewProducer(brokers)
+	if err != nil {
+		log.Fatalf("kafka: %v", err)
 	}
+	defer prod.Close()
 
 	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 
@@ -44,18 +44,19 @@ func main() {
 		if p.Ts == 0 {
 			p.Ts = time.Now().UnixMilli()
 		}
-		c := context.Background()
-		if err := rdb.GeoAdd(c, geoKey, &redis.GeoLocation{Name: p.ID, Latitude: p.Lat, Longitude: p.Lng}).Err(); err != nil {
-			http.Error(w, "geoadd", http.StatusInternalServerError)
+		// Partition key = coarse H3 cell -> spatial locality across consumers.
+		key, err := spatial.CellOf(p.Lat, p.Lng, bus.KeyRes)
+		if err != nil {
+			http.Error(w, "bad point", http.StatusBadRequest)
 			return
 		}
 		b, _ := json.Marshal(p)
-		rdb.Publish(c, channel, b)
+		bus.Produce(context.Background(), prod, bus.TopicPositions, key, b)
 		w.WriteHeader(http.StatusAccepted)
 	})
 
 	addr := ":" + env("PORT", "8080")
-	log.Printf("ingest-gateway on %s", addr)
+	log.Printf("ingest-gateway on %s -> topic %s (key res=%d)", addr, bus.TopicPositions, bus.KeyRes)
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
 

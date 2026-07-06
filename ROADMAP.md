@@ -8,8 +8,8 @@
 | 1 | Ingest + ws-fanout + simulator + deck.gl map (+OSRM road-snap) | ✅ Done |
 | 2 | H3 indexing + "who's near me" (radius/nearest) | ✅ Done |
 | 3 | Matching engine: greedy, locking, no double-assign | ✅ Done |
-| 4 | Redpanda backbone: partition by H3, idempotency, backpressure | ⬜ Next |
-| 5 | Surge analytics: windowed spatial aggregation + heatmap | ⬜ |
+| 4 | Redpanda backbone: partition by H3, idempotency, backpressure | ✅ Done |
+| 5 | Surge analytics: windowed spatial aggregation + heatmap | ⬜ Next |
 | 6 | Real-feed toggle (OpenSky / GTFS-RT) → MVP demoable | ⬜ |
 | 7 | Observability: Prometheus/Grafana, traces | ⬜ |
 | 8 | Rust hot path (matcher/indexer), measured | ⬜ |

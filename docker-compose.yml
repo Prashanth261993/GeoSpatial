@@ -52,17 +52,30 @@ services:
     ports: ["5000:5000"]
     volumes: ["./data/osrm:/data"]
 
+  redpanda-init:
+    image: redpandadata/redpanda:v24.2.7
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        rpk topic create positions -p 12 -r 1 --brokers redpanda:9092 || true;
+        rpk topic create trips -p 6 -r 1 --brokers redpanda:9092 || true;
+        echo topics ready
+    depends_on:
+      redpanda: { condition: service_healthy }
+    restart: "no"
+
   ingest-gateway:
     build:
       context: .
-      dockerfile: services/Dockerfile
+      dockerfile: services/Dockerfile.cgo
       args: { SVC: ingest-gateway }
     environment:
-      REDIS_ADDR: redis:6379
+      REDPANDA_BROKERS: redpanda:9092
       PORT: "8080"
     ports: ["8080:8080"]
     depends_on:
-      redis: { condition: service_healthy }
+      redpanda: { condition: service_healthy }
+      redpanda-init: { condition: service_completed_successfully }
 
   ws-fanout:
     build:
@@ -70,11 +83,12 @@ services:
       dockerfile: services/Dockerfile
       args: { SVC: ws-fanout }
     environment:
-      REDIS_ADDR: redis:6379
+      REDPANDA_BROKERS: redpanda:9092
       PORT: "8090"
     ports: ["8090:8090"]
     depends_on:
-      redis: { condition: service_healthy }
+      redpanda: { condition: service_healthy }
+      redpanda-init: { condition: service_completed_successfully }
 
   indexer:
     build:
@@ -83,19 +97,22 @@ services:
       args: { SVC: indexer }
     environment:
       REDIS_ADDR: redis:6379
+      REDPANDA_BROKERS: redpanda:9092
       PORT: "8100"
       H3_RES: "9"
     ports: ["8100:8100"]
     depends_on:
       redis: { condition: service_healthy }
+      redpanda-init: { condition: service_completed_successfully }
 
   matcher:
     build:
       context: .
-      dockerfile: services/Dockerfile
+      dockerfile: services/Dockerfile.cgo
       args: { SVC: matcher }
     environment:
       REDIS_ADDR: redis:6379
+      REDPANDA_BROKERS: redpanda:9092
       PORT: "8110"
       NEARBY_URL: http://indexer:8100/nearby
       MATCH_MODE: ${MATCH_MODE:-greedy}
@@ -103,6 +120,7 @@ services:
     ports: ["8110:8110"]
     depends_on:
       redis: { condition: service_healthy }
+      redpanda-init: { condition: service_completed_successfully }
 
   simulator:
     build:

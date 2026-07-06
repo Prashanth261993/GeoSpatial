@@ -1,15 +1,21 @@
-// ws-fanout: subscribes to Redis pub/sub and broadcasts to all WebSocket clients.
+// ws-fanout: consumes the positions and trips topics from Redpanda and
+// broadcasts every record to all connected WebSocket clients. Each instance
+// uses a UNIQUE consumer group so it receives ALL partitions (fan-out, not
+// work-sharing) and starts at the latest offset (live tail).
 package main
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"sync"
 
+	"github.com/Prashanth261993/geospatial/internal/bus"
 	"github.com/coder/websocket"
-	"github.com/redis/go-redis/v9"
+	"github.com/twmb/franz-go/pkg/kgo"
 )
 
 type hub struct {
@@ -39,20 +45,32 @@ func (h *hub) broadcast(b []byte) {
 	for ch := range h.clients {
 		select {
 		case ch <- b:
-		default: // drop on slow client (backpressure preview)
+		default: // drop on slow client
 		}
 	}
 	h.mu.RUnlock()
 }
 
 func main() {
-	rdb := redis.NewClient(&redis.Options{Addr: env("REDIS_ADDR", "localhost:6379")})
 	h := newHub()
+	brokers := bus.Brokers(env("REDPANDA_BROKERS", "localhost:19092"))
+	group := fmt.Sprintf("fanout-%d", rand.Int63())
+	cl, err := kgo.NewClient(
+		kgo.SeedBrokers(brokers...),
+		kgo.ConsumerGroup(group),
+		kgo.ConsumeTopics(bus.TopicPositions, bus.TopicTrips),
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtEnd()), // live tail
+	)
+	if err != nil {
+		log.Fatalf("kafka: %v", err)
+	}
+	defer cl.Close()
 
 	go func() {
-		sub := rdb.Subscribe(context.Background(), "positions", "trips")
-		for msg := range sub.Channel() {
-			h.broadcast([]byte(msg.Payload))
+		ctx := context.Background()
+		for {
+			fetches := cl.PollFetches(ctx)
+			fetches.EachRecord(func(rec *kgo.Record) { h.broadcast(rec.Value) })
 		}
 	}()
 
@@ -79,7 +97,7 @@ func main() {
 	})
 
 	addr := ":" + env("PORT", "8090")
-	log.Printf("ws-fanout on %s", addr)
+	log.Printf("ws-fanout on %s (group=%s, topics=%s,%s)", addr, group, bus.TopicPositions, bus.TopicTrips)
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
 
