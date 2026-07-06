@@ -1,0 +1,96 @@
+---
+const base = import.meta.env.BASE_URL;
+
+const mermaid = `flowchart LR
+  OS["OpenSky REST<br/>/states/all"] -->|"poll 12s (bbox)"| AD["adapter<br/>(anti-corruption)"]
+  AD -->|"normalize → Position{aircraft}"| T[("positions topic<br/>H3-keyed")]
+  T --> IX["indexer<br/>(skips non-drivers)"]
+  T --> WS["ws-fanout"]
+  WS --> MAP["map · plane icons"]
+  UI["UI toggle"] -->|"POST /feeds enable"| AD`;
+
+const codeAdapter = `<span class="cm">// anti-corruption layer: the foreign array shape never escapes this function</span>
+lng := s[<span class="fn">5</span>].(float64); lat := s[<span class="fn">6</span>].(float64)
+hdg := s[<span class="fn">10</span>].(float64)          <span class="cm">// true_track</span>
+p := event.Position{
+    ID: <span class="st">"ac-"</span>+icao24, Lat: lat, Lng: lng,
+    Type: event.TypeAircraft, Hdg: hdg,   <span class="cm">// our clean internal event</span>
+}`;
+
+const codeResilient = `resp, err := client.Do(req)          <span class="cm">// 10s timeout — never hang</span>
+<span class="kw">if</span> err != nil { keepLastGood(); <span class="kw">return</span> }
+<span class="kw">if</span> resp.StatusCode == <span class="fn">429</span> { backOff(); <span class="kw">return</span> }  <span class="cm">// honor rate limit</span>
+<span class="cm">// bad record? skip it, not the whole batch</span>`;
+---
+<section id="phase-6" class="chapter">
+  <div class="wrap">
+    <div class="reveal">
+      <span class="tag">PHASE 06 · REAL-DATA INTEGRATIONS</span>
+      <h2>From simulated to real — live aircraft over Seattle</h2>
+      <p class="sub">Every phase so far ran on simulated drivers. This one proves the pipeline ingests thousands of <em>actual</em> moving entities from live public APIs — through the same H3 index, Kafka backbone, and fan-out, unchanged.</p>
+    </div>
+
+    <figure class="figure reveal">
+      <img src={`${base}/img/phase6/aircraft.gif`} alt="Real aircraft as plane glyphs rotated by heading, moving across the Pacific Northwest, with the rideshare fleet downtown" loading="lazy" />
+      <figcaption>~130 real aircraft from the OpenSky Network, streaming live over the Pacific Northwest. Each plane is rotated to its actual heading; the rideshare fleet clusters downtown. Both flow through the exact same pipeline.</figcaption>
+    </figure>
+
+    <div class="prose reveal">
+      <div class="h3">Integrating a source you don't control</div>
+      <p>Our simulator behaves; a public API does not. Real feeds bring rate limits, auth, downtime, and messy schemas. OpenSky returns heterogeneous arrays — <code>state[5]</code> is longitude, <code>[6]</code> latitude, <code>[10]</code> heading. The engineering question is: how do you absorb that mess without letting it corrupt a clean system?</p>
+
+      <div class="h3">The anti-corruption layer</div>
+      <p>Each feed gets an <b>adapter</b> that reads the ugly foreign format and emits our internal <code>Position</code> event — nothing else. Downstream services never learn OpenSky exists; an aircraft looks exactly like a sim driver, just with a different type. This is the classic Domain-Driven Design anti-corruption pattern, and it's why adding a real data source was purely <em>additive</em>: the indexer, matcher, surge service, fan-out, and map all handled live aircraft with <b>zero code changes</b>.</p>
+    </div>
+
+    <div class="code reveal">
+      <div class="bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="lang">services/feeds/opensky.go · normalize</span></div>
+      <pre><code set:html={codeAdapter}></code></pre>
+    </div>
+
+    <pre class="mermaid reveal" set:html={mermaid}></pre>
+
+    <div class="prose reveal">
+      <div class="h3">The source will fail — plan for it</div>
+      <p>A poller that crashes on a bad response is worthless. Every request has a timeout; a 429 is handled explicitly with backoff; a malformed record is skipped, not fatal; and the last good data is kept on error. The rule: <b>an external dependency must never be able to crash your service.</b></p>
+    </div>
+
+    <div class="code reveal">
+      <div class="bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="lang">services/feeds · resilience</span></div>
+      <pre><code set:html={codeResilient}></code></pre>
+    </div>
+
+    <div class="prose reveal">
+      <div class="h3">Keeping a Boeing out of the rider queue</div>
+      <p>If aircraft flowed into the matching path they'd become dispatch candidates — absurd. We added a <code>type</code> to every position (driver / aircraft / bus). The indexer only indexes drivers, so aircraft reach the map but are never proximity candidates; the matcher pairs drivers only. Verified live: the driver index held steady at 200 while 130 aircraft streamed past. One typed event, one topic, correct behavior.</p>
+
+      <div class="h3">On-demand ingestion is backpressure toward the source</div>
+      <p>The pollers start <b>off</b>. Flipping the UI toggle calls a control endpoint that starts or stops polling. Why not just poll around the clock? Because OpenSky's free tier is rate-limited, and polling for an empty room burns that budget. We only pull while someone is watching — <b>backpressure applied to an external producer</b>, the inverse of the consumer-lag backpressure from the event-log phase. The bonus is the demo itself: flip the switch and real planes appear.</p>
+    </div>
+
+    <figure class="figure reveal">
+      <img src={`${base}/img/phase6/aircraft.png`} alt="Wide view of live aircraft as plane silhouettes across the airspace" loading="lazy" />
+      <figcaption>Plane silhouettes, each turned to its real track. Semantic icon glyphs (car, pin, plane) replace generic dots — telling you <em>what</em> each entity is, not just where.</figcaption>
+    </figure>
+
+    <div class="callout reveal"><b>Foresight paying off.</b> Back in the indexing phase we made resolution a parameter precisely because aircraft live at a different spatial scale than city cars. Adding a wildly different entity type here was a config value and a type flag — not a rewrite. Clean early decisions compound.</div>
+
+    <div class="reveal">
+      <div class="h3">Tradeoffs</div>
+      <table class="tbl">
+        <thead><tr><th>Decision</th><th>Chose</th><th>Rejected</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td>Normalization</td><td class="pick">anti-corruption adapter</td><td class="drop">let foreign shape flow</td><td>keep core clean, feeds additive</td></tr>
+          <tr><td>Entity model</td><td class="pick">typed Position, one topic</td><td class="drop">topic per type</td><td>minimal change, matcher filters</td></tr>
+          <tr><td>Ingestion</td><td class="pick">on-demand toggle</td><td class="drop">always-on polling</td><td>conserve rate limit</td></tr>
+          <tr><td>Aircraft indexing</td><td class="pick">map-only (skip)</td><td class="drop">index them</td><td>not matchable</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose reveal">
+      <div class="h3">What's next</div>
+      <p><b>Phase 7 — observability.</b> With real data flowing, we instrument the system: Prometheus metrics and Grafana dashboards for throughput, consumer lag, match latency, and surge — turning the platform from "it works" into "we can see it working, and prove it."</p>
+    </div>
+  </div>
+</section>

@@ -105,7 +105,7 @@ func driver(id string, wg *sync.WaitGroup) {
 }
 
 func post(cli *http.Client, id string, lat, lng float64) {
-	b, _ := json.Marshal(event.Position{ID: id, Lat: lat, Lng: lng, Ts: time.Now().UnixMilli()})
+	b, _ := json.Marshal(event.Position{ID: id, Lat: lat, Lng: lng, Ts: time.Now().UnixMilli(), Type: event.TypeDriver})
 	if resp, err := cli.Post(ingest, "application/json", bytes.NewReader(b)); err == nil {
 		resp.Body.Close()
 	}

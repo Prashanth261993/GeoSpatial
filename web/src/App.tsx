@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { Deck } from "@deck.gl/core";
-import { ScatterplotLayer, ArcLayer } from "@deck.gl/layers";
+import { ScatterplotLayer, ArcLayer, IconLayer } from "@deck.gl/layers";
 import { H3HexagonLayer } from "@deck.gl/geo-layers";
 
-type Pos = { id: string; lat: number; lng: number; ts: number };
+type Pos = { id: string; lat: number; lng: number; ts: number; type?: string; hdg?: number };
 type Track = { fromLng: number; fromLat: number; toLng: number; toLat: number; t0: number; t1: number };
+type Air = Track & { hdg: number };
 type Trip = { reqId: string; driver: string; dLat: number; dLng: number; rLat: number; rLng: number; t0: number; durMs: number };
 type Query = { cells: string[]; matched: Set<string>; center: [number, number] | null };
 
@@ -18,13 +19,24 @@ const WS = (import.meta.env.VITE_WS_URL as string) || "ws://localhost:8090/ws";
 const NEARBY = (import.meta.env.VITE_NEARBY_URL as string) || "http://localhost:8100/nearby";
 const STATS = (import.meta.env.VITE_STATS_URL as string) || "http://localhost:8110/stats";
 const SURGE = (import.meta.env.VITE_SURGE_URL as string) || "http://localhost:8120/surge";
+const FEEDS = (import.meta.env.VITE_FEEDS_URL as string) || "http://localhost:8130/feeds";
 const RADIUS = 1200;
 
-// surge multiplier (1..3) -> RGB (calm cyan -> hot magenta/red)
 function surgeColor(m: number): [number, number, number] {
-  const t = Math.min(1, Math.max(0, (m - 1) / 2)); // 1x..3x -> 0..1
+  const t = Math.min(1, Math.max(0, (m - 1) / 2));
   return [Math.round(80 + 175 * t), Math.round(200 - 140 * t), Math.round(235 - 160 * t)];
 }
+
+// White mask SVGs (tinted per type/state via IconLayer getColor + mask:true).
+function icon(path: string, w = 24, h = 24) {
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 ${w} ${h}'><path d='${path}' fill='#fff'/></svg>`;
+  return { url: "data:image/svg+xml;base64," + btoa(svg), width: 48, height: 48, mask: true, anchorX: 24, anchorY: 24 };
+}
+const ICON = {
+  car: icon("M3 13l1.5-4.5A2 2 0 016.4 7h11.2a2 2 0 011.9 1.5L21 13v5a1 1 0 01-1 1h-1a1 1 0 01-1-1v-1H6v1a1 1 0 01-1 1H4a1 1 0 01-1-1zM6.5 16a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm11 0a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"),
+  pin: icon("M12 2a7 7 0 00-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 00-7-7zm0 9.5A2.5 2.5 0 1112 6a2.5 2.5 0 010 5.5z"),
+  plane: icon("M12 2c-.8 0-1.4.9-1.4 2v5.3L3 14v1.7l7.6-2.2V18l-2 1.4V21l3.4-1 3.4 1v-1.6l-2-1.4v-3.5l7.6 2.2V14l-7.6-4.7V4c0-1.1-.6-2-1.4-2z"),
+};
 
 export function App() {
   const ref = useRef<HTMLDivElement>(null);
@@ -38,8 +50,7 @@ export function App() {
     const deck = new Deck({
       parent: ref.current!,
       initialViewState: { longitude: -122.3321, latitude: 47.6062, zoom: 11.5 },
-      controller: true,
-      getCursor: () => "crosshair",
+      controller: true, getCursor: () => "crosshair",
       onViewStateChange: ({ viewState: v }) => {
         map.jumpTo({ center: [v.longitude, v.latitude], zoom: v.zoom, bearing: v.bearing, pitch: v.pitch });
       },
@@ -47,16 +58,25 @@ export function App() {
     });
 
     const tracks = new Map<string, Track>();
+    const aircraft = new Map<string, Air>();
     const trips = new Map<string, Trip>();
     const query: Query = { cells: [], matched: new Set(), center: null };
     let surgeZones: { cell: string; surge: number }[] = [];
-    const show = { ops: true, surge: false };
+    const show = { ops: true, surge: false, air: false };
 
-    // layer toggles
     const opsEl = document.getElementById("tgl-ops") as HTMLInputElement;
     const surgeEl = document.getElementById("tgl-surge") as HTMLInputElement;
+    const airEl = document.getElementById("tgl-air") as HTMLInputElement;
     opsEl?.addEventListener("change", () => { show.ops = opsEl.checked; });
     surgeEl?.addEventListener("change", () => { show.surge = surgeEl.checked; });
+    airEl?.addEventListener("change", async () => {
+      show.air = airEl.checked;
+      setAir(airEl.checked ? "starting live feed…" : "");
+      try {
+        await fetch(FEEDS, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ feed: "opensky", enabled: airEl.checked }) });
+      } catch { setAir("feed control failed"); }
+      if (!airEl.checked) aircraft.clear();
+    });
 
     const runQuery = async (lng: number, lat: number) => {
       query.center = [lng, lat];
@@ -75,127 +95,75 @@ export function App() {
       const m = JSON.parse(e.data);
       if (m.kind === "trip") {
         if (m.event === "assigned") {
-          trips.set(m.reqId, { reqId: m.reqId, driver: m.driver,
-            dLat: m.driverLat, dLng: m.driverLng, rLat: m.riderLat, rLng: m.riderLng,
-            t0: performance.now(), durMs: m.durMs });
-        } else if (m.event === "completed") {
-          trips.delete(m.reqId);
-        }
+          trips.set(m.reqId, { reqId: m.reqId, driver: m.driver, dLat: m.driverLat, dLng: m.driverLng, rLat: m.riderLat, rLng: m.riderLng, t0: performance.now(), durMs: m.durMs });
+        } else if (m.event === "completed") { trips.delete(m.reqId); }
         return;
       }
       const p: Pos = m;
       const now = performance.now();
+      if (p.type === "aircraft") {
+        const prev = aircraft.get(p.id);
+        aircraft.set(p.id, { fromLng: prev?.toLng ?? p.lng, fromLat: prev?.toLat ?? p.lat, toLng: p.lng, toLat: p.lat, t0: now, t1: now + 12000, hdg: p.hdg ?? 0 });
+        return;
+      }
       const prev = tracks.get(p.id);
-      tracks.set(p.id, {
-        fromLng: prev?.toLng ?? p.lng, fromLat: prev?.toLat ?? p.lat,
-        toLng: p.lng, toLat: p.lat, t0: now, t1: now + 1000,
-      });
+      tracks.set(p.id, { fromLng: prev?.toLng ?? p.lng, fromLat: prev?.toLat ?? p.lat, toLng: p.lng, toLat: p.lat, t0: now, t1: now + 1000 });
     };
 
     let raf = 0;
     const tick = () => {
       const now = performance.now();
       const onTrip = new Set([...trips.values()].map((t) => t.driver));
+      const lerp = (t: Track) => { const a = Math.min(1, (now - t.t0) / (t.t1 - t.t0)); return [t.fromLng + (t.toLng - t.fromLng) * a, t.fromLat + (t.toLat - t.fromLat) * a]; };
 
-      const drivers = [...tracks.entries()]
-        .filter(([id]) => !onTrip.has(id))
-        .map(([id, t]) => {
-          const a = Math.min(1, (now - t.t0) / (t.t1 - t.t0));
-          return { id, position: [t.fromLng + (t.toLng - t.fromLng) * a, t.fromLat + (t.toLat - t.fromLat) * a], matched: query.matched.has(id) };
-        });
+      const drivers = [...tracks.entries()].filter(([id]) => !onTrip.has(id)).map(([id, t]) => ({ id, position: lerp(t), matched: query.matched.has(id) }));
       setCount(tracks.size);
-
       const tripList = [...trips.values()];
-      const markers = tripList.map((t) => {
-        const a = Math.min(1, (now - t.t0) / t.durMs); // driver -> rider progress
-        return { position: [t.dLng + (t.rLng - t.dLng) * a, t.dLat + (t.rLat - t.dLat) * a] };
-      });
+      const markers = tripList.map((t) => { const a = Math.min(1, (now - t.t0) / t.durMs); return { position: [t.dLng + (t.rLng - t.dLng) * a, t.dLat + (t.rLat - t.dLat) * a] }; });
+      const airList = [...aircraft.values()].map((a) => ({ position: lerp(a), hdg: a.hdg }));
 
       const layers: any[] = [];
-
-      // Surge heatmap (toggle): 3D extruded H3 zones, color+height by multiplier.
       if (show.surge && surgeZones.length) {
         layers.push(new H3HexagonLayer({
-          id: "surge", data: surgeZones, getHexagon: (d: any) => d.cell,
-          extruded: true, filled: true, wireframe: false,
-          elevationScale: 1,
-          getElevation: (d: any) => (d.surge - 1) * 900, // 1x=flat, 3x=~1800m
-          getFillColor: (d: any) => [...surgeColor(d.surge), 180] as any,
-          opacity: 0.75, pickable: false,
-          updateTriggers: { getElevation: surgeZones, getFillColor: surgeZones },
+          id: "surge", data: surgeZones, getHexagon: (d: any) => d.cell, extruded: true, filled: true,
+          getElevation: (d: any) => (d.surge - 1) * 900, getFillColor: (d: any) => [...surgeColor(d.surge), 180] as any,
+          opacity: 0.75, updateTriggers: { getElevation: surgeZones, getFillColor: surgeZones },
         }));
       }
-
       if (show.ops) {
-      if (query.cells.length) {
-        layers.push(new H3HexagonLayer({
-          id: "disk", data: query.cells, getHexagon: (d: string) => d,
-          filled: true, stroked: true, extruded: false,
-          getFillColor: [137, 220, 235, 18], getLineColor: [137, 220, 235, 110], lineWidthMinPixels: 1,
-        }));
+        if (query.cells.length) {
+          layers.push(new H3HexagonLayer({ id: "disk", data: query.cells, getHexagon: (d: string) => d, filled: true, stroked: true, extruded: false, getFillColor: [137, 220, 235, 18], getLineColor: [137, 220, 235, 110], lineWidthMinPixels: 1 }));
+        }
+        layers.push(new ArcLayer({ id: "arcs", data: tripList, getSourcePosition: (t: Trip) => [t.dLng, t.dLat], getTargetPosition: (t: Trip) => [t.rLng, t.rLat], getSourceColor: [245, 194, 231], getTargetColor: [249, 226, 175], getWidth: 2, getHeight: 0.3 }));
+        // riders as pins
+        layers.push(new IconLayer({ id: "riders", data: tripList, getIcon: () => ICON.pin, getPosition: (t: Trip) => [t.rLng, t.rLat], getSize: 26, sizeUnits: "pixels", getColor: [249, 226, 175] }));
+        // drivers as cars (matched = lavender, else cyan)
+        layers.push(new IconLayer({ id: "drivers", data: drivers, getIcon: () => ICON.car, getPosition: (d: any) => d.position, getSize: (d: any) => (d.matched ? 26 : 20), sizeUnits: "pixels", getColor: (d: any) => (d.matched ? [180, 190, 254] : [137, 220, 235]), updateTriggers: { getColor: query.matched, getSize: query.matched } }));
+        // on-trip cars in pink
+        layers.push(new IconLayer({ id: "trip-cars", data: markers, getIcon: () => ICON.car, getPosition: (d: any) => d.position, getSize: 24, sizeUnits: "pixels", getColor: [245, 194, 231] }));
+        if (query.center) {
+          layers.push(new ScatterplotLayer({ id: "marker", data: [query.center], getPosition: (d: number[]) => d, getRadius: 90, radiusMinPixels: 5, getFillColor: [243, 139, 168], stroked: true, getLineColor: [255, 255, 255], lineWidthMinPixels: 2 }));
+        }
       }
-      // trip arcs: driver -> rider
-      layers.push(new ArcLayer({
-        id: "arcs", data: tripList,
-        getSourcePosition: (t: Trip) => [t.dLng, t.dLat],
-        getTargetPosition: (t: Trip) => [t.rLng, t.rLat],
-        getSourceColor: [245, 194, 231], getTargetColor: [249, 226, 175],
-        getWidth: 2, getHeight: 0.3,
-      }));
-      // riders (pickup targets)
-      layers.push(new ScatterplotLayer({
-        id: "riders", data: tripList,
-        getPosition: (t: Trip) => [t.rLng, t.rLat],
-        getRadius: 60, radiusMinPixels: 3, getFillColor: [249, 226, 175],
-        stroked: true, getLineColor: [20, 20, 20], lineWidthMinPixels: 1,
-      }));
-      // free/queried drivers
-      layers.push(new ScatterplotLayer({
-        id: "drivers", data: drivers,
-        getPosition: (d: any) => d.position,
-        getRadius: (d: any) => (d.matched ? 70 : 40), radiusMinPixels: 2.5,
-        getFillColor: (d: any) => (d.matched ? [180, 190, 254] : [137, 220, 235]),
-        opacity: 0.95, updateTriggers: { getFillColor: query.matched, getRadius: query.matched },
-      }));
-      // on-trip driver markers, animating toward the rider
-      layers.push(new ScatterplotLayer({
-        id: "trip-markers", data: markers,
-        getPosition: (d: any) => d.position,
-        getRadius: 80, radiusMinPixels: 4, getFillColor: [245, 194, 231],
-        stroked: true, getLineColor: [255, 255, 255], lineWidthMinPixels: 1.5,
-      }));
-      if (query.center) {
-        layers.push(new ScatterplotLayer({
-          id: "marker", data: [query.center], getPosition: (d: number[]) => d,
-          getRadius: 90, radiusMinPixels: 5, getFillColor: [243, 139, 168],
-          stroked: true, getLineColor: [255, 255, 255], lineWidthMinPixels: 2,
+      // real aircraft (toggle): plane glyphs rotated by heading
+      if (show.air && airList.length) {
+        setAir(`${airList.length} live aircraft (OpenSky)`);
+        layers.push(new IconLayer({
+          id: "aircraft", data: airList, getIcon: () => ICON.plane,
+          getPosition: (d: any) => d.position, getSize: 30, sizeUnits: "pixels",
+          getAngle: (d: any) => -d.hdg, getColor: [180, 190, 254],
+          updateTriggers: { getAngle: now },
         }));
-      }
       }
       deck.setProps({ layers });
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
 
-    // stats panel
     const poll = setInterval(async () => {
-      try {
-        const s = await (await fetch(STATS)).json();
-        setText("mode", s.mode);
-        setText("active", s.activeTrips);
-        setText("assigned", s.totalAssigned);
-        setText("avg", s.avgPickupM ? `${Math.round(s.avgPickupM)} m` : "—");
-      } catch {}
+      try { const s = await (await fetch(STATS)).json(); setText("mode", s.mode); setText("active", s.activeTrips); setText("assigned", s.totalAssigned); setText("avg", s.avgPickupM ? `${Math.round(s.avgPickupM)} m` : "—"); } catch {}
     }, 1000);
-
-    // surge poll (only fetch when the layer is on)
-    const surgePoll = setInterval(async () => {
-      if (!show.surge) return;
-      try {
-        const j = await (await fetch(SURGE)).json();
-        surgeZones = j.zones ?? [];
-      } catch {}
-    }, 2000);
+    const surgePoll = setInterval(async () => { if (!show.surge) return; try { const j = await (await fetch(SURGE)).json(); surgeZones = j.zones ?? []; } catch {} }, 2000);
 
     return () => { cancelAnimationFrame(raf); clearInterval(poll); clearInterval(surgePoll); ws.close(); deck.finalize(); map.remove(); };
   }, []);
@@ -206,3 +174,4 @@ export function App() {
 
 function setText(id: string, v: any) { const el = document.getElementById(id); if (el) el.textContent = String(v); }
 function setNear(s: string) { const el = document.getElementById("near"); if (el) el.textContent = s; }
+function setAir(s: string) { const el = document.getElementById("air"); if (el) el.textContent = s; }
