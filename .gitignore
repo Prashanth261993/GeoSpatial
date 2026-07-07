@@ -41,6 +41,7 @@ Thumbs.db
 .gifframes/
 .gifenc/
 .chart/
+.cine/
 
 # Local-only compose overrides (e.g. temporary port remaps)
 docker-compose.override.yml
