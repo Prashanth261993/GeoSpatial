@@ -13,6 +13,7 @@ docker compose up -d
 ```
 Brings up Redpanda, Redis, TimescaleDB, the Go services, simulator, and the map.
 Open http://localhost:8899 — 200 simulated Seattle drivers move in real time.
+For the cinematic showcase view, open http://localhost:8899/#/cinematic (or click ✦ cinematic).
 Add `VITE_MAPTILER_KEY` to `.env` for dark vector tiles (else a plain fallback map).
 
 ## Lifecycle (start / stop / status)
