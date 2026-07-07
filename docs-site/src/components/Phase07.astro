@@ -1,0 +1,94 @@
+---
+const base = import.meta.env.BASE_URL;
+
+const mermaid = `flowchart LR
+  WS["WebSocket<br/>positions + trips"] --> BUF["client rolling<br/>path buffer + timestamps"]
+  BUF --> TL["TripsLayer<br/>glowing trails"]
+  WS --> RP["match ripples"]
+  SG[("/surge")] --> COL["breathing<br/>3D columns"]
+  TL --> SC["/cinematic<br/>+ orbit + glow GLSL + vignette"]
+  RP --> SC
+  COL --> SC`;
+
+const codeShader = `<span class="cm">// PulseGlow — a deck.gl LayerExtension injecting GLSL into the fragment shader</span>
+<span class="cm">// turns each flat disc into a soft radial neon glow (no custom uniforms → portable)</span>
+float d = length(geometry.uv);        <span class="cm">// 0 center → 1 rim</span>
+float glow = pow(1.0 - smoothstep(0.0, 1.0, d), 1.8);
+color.a  *= glow;                     <span class="cm">// fade to transparent at the edge</span>
+color.rgb += glow * 0.35;             <span class="cm">// hot core bleeds toward white</span>`;
+
+const codeTrails = `<span class="cm">// sparse server, smart client: buffer a rolling path per entity…</span>
+push(id, lng, lat): tr.path.push([lng,lat]); tr.ts.push(now)
+  <span class="kw">while</span> (now - tr.ts[0] > TRAIL_SEC) { tr.path.shift(); tr.ts.shift() }
+<span class="cm">// …and let TripsLayer fade each segment by (currentTime - timestamp)</span>
+new TripsLayer({ getPath, getTimestamps, currentTime: now, trailLength: 9, fadeTrail: true })`;
+---
+<section id="phase-7" class="chapter">
+  <div class="wrap">
+    <div class="reveal">
+      <span class="tag">PHASE 07 · CINEMATIC FRONTEND</span>
+      <h2>The same data, as a showpiece</h2>
+      <p class="sub">A dedicated <code>/cinematic</code> route turns the live feed into a visualization: glowing comet-trails, breathing neon surge columns, match ripples, and a slow 3D orbit over a darkened Seattle — the operations map stays a tool, this goes all-out.</p>
+    </div>
+
+    <figure class="figure reveal">
+      <img src={`${base}/img/phase7/cinematic.gif`} alt="Cinematic 3D view: glowing driver trails, breathing magenta surge columns, match ripples, auto-orbiting camera over dark Seattle" loading="lazy" />
+      <figcaption>Live drivers leave glowing comet-trails through downtown; surge zones rise as breathing neon columns; each match sends an expanding ripple — all under a slowly orbiting, tilted camera. Same WebSocket feed as the ops map, rendered as data-art.</figcaption>
+    </figure>
+
+    <div class="prose reveal">
+      <div class="h3">What makes it cinematic</div>
+      <p>Four ingredients, in order of impact: <b>motion trails</b> (a dot with a fading tail reads as alive, not just present), <b>glow</b> (bright marks bleeding light on a dark field feel like energy), <b>depth and camera</b> (a tilted, orbiting 3D view turns a flat map into a cityscape), and <b>custom shaders</b> for what libraries can't express. The strategy: get 80% of the wow from GPU-native libraries, and the last 20% from a little hand-written GLSL.</p>
+
+      <div class="h3">Sparse server, smart client — again</div>
+      <p>Motion trails need <em>paths with timestamps</em>, but the server streams <em>point updates</em>. So the client keeps a rolling buffer of each entity's recent positions (trimmed to the last ~9 seconds) and feeds deck.gl's GPU <code>TripsLayer</code> a <code>currentTime</code> that fades each segment by its age. The server streams truth cheaply; the client synthesizes the rich visual — the same principle behind the smooth interpolation from Phase 1.</p>
+    </div>
+
+    <div class="code reveal">
+      <div class="bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="lang">Cinematic.tsx · trails</span></div>
+      <pre><code set:html={codeTrails}></code></pre>
+    </div>
+
+    <pre class="mermaid reveal" set:html={mermaid}></pre>
+
+    <div class="prose reveal">
+      <div class="h3">The custom shader — a real GLSL flex, done safely</div>
+      <p>The neon glow isn't a filter — it's a hand-written fragment shader. <code>PulseGlow</code> is a deck.gl layer extension that injects GLSL to turn each flat disc into a soft radial glow, brightest at the core and transparent at the rim. It reads the disc's built-in local coordinate rather than a custom uniform, which keeps it robust across deck.gl v9's uniform-buffer changes — genuine shader work that can't break across builds. The time-based pulsing rides on top from JavaScript.</p>
+    </div>
+
+    <div class="code reveal">
+      <div class="bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="lang">pulseGlow.ts · injected GLSL</span></div>
+      <pre><code set:html={codeShader}></code></pre>
+    </div>
+
+    <figure class="figure reveal">
+      <img src={`${base}/img/phase7/surge3d.png`} alt="3D breathing surge columns rising over the city under scarcity" loading="lazy" />
+      <figcaption>Under supply scarcity, surge zones rise as breathing 3D columns — height and color track the multiplier. They only render where surge actually spikes (&gt;1.05×), so calm areas never wash out the trails.</figcaption>
+    </figure>
+
+    <div class="callout reveal"><b>Libraries for 80%, GLSL for 20%.</b> The trails (TripsLayer), extruded surge (H3HexagonLayer), and auto-orbit camera are GPU-native deck.gl — reimplementing them would cost days. The signature glow is hand-written GLSL. Maximum wow, no shader rabbit-hole, and it all runs on the same live feed with zero backend changes.</div>
+
+    <figure class="figure reveal">
+      <img src={`${base}/img/phase7/trails.png`} alt="Dense glowing driver trails threading downtown Seattle at full fleet" loading="lazy" />
+      <figcaption>At full fleet, hundreds of glowing trails thread the street grid — the city's motion rendered in light.</figcaption>
+    </figure>
+
+    <div class="reveal">
+      <div class="h3">Tradeoffs</div>
+      <table class="tbl">
+        <thead><tr><th>Decision</th><th>Chose</th><th>Rejected</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td>Structure</td><td class="pick">separate /cinematic route</td><td class="drop">enhance ops map</td><td>keep the functional tool intact</td></tr>
+          <tr><td>Trails</td><td class="pick">TripsLayer + client buffer</td><td class="drop">reimplement</td><td>GPU-native, days saved</td></tr>
+          <tr><td>Glow</td><td class="pick">custom GLSL falloff</td><td class="drop">bloom post-process</td><td>robust across GPUs / deck builds</td></tr>
+          <tr><td>Surge</td><td class="pick">columns filtered &gt;1.05×</td><td class="drop">render all zones</td><td>don't wash out the trails</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose reveal">
+      <div class="h3">What's next</div>
+      <p><b>Phase 8 — observability.</b> With the system feature-complete and beautiful, we instrument it: Prometheus metrics and Grafana dashboards for throughput, consumer lag, match latency, and surge — turning "it works" into "we can see it working, and prove it."</p>
+    </div>
+  </div>
+</section>

@@ -35,9 +35,26 @@
       #sliders .srow span { color: #8b93a7; width: 66px; }
       #sliders .srow b { color: #89dceb; width: 52px; text-align: right; }
       #sliders input[type=range] { flex: 1; accent-color: #89dceb; }
+      #viewnav { position: absolute; z-index: 3; bottom: 12px; left: 50%; transform: translateX(-50%);
+        color: #cdd6f4; text-decoration: none; font: 12px ui-monospace, monospace; letter-spacing: 1px;
+        background: #11131aee; border: 1px solid #2a3346; border-radius: 999px; padding: 8px 18px; }
+      #viewnav:hover { border-color: #89dceb; color: #89dceb; }
+      body.cinematic #ops-ui { display: none; }
+      body.cinematic #viewnav { display: none; }
+      .cine-vignette { position: absolute; inset: 0; z-index: 2; pointer-events: none;
+        background: radial-gradient(ellipse 75% 70% at 50% 45%, transparent 40%, #04060bcc 100%); }
+      .cine-hud { position: absolute; z-index: 3; top: 28px; left: 34px; pointer-events: none; }
+      .cine-title { font: 700 30px/1 "Inter", system-ui, sans-serif; letter-spacing: 4px; color: #eaf6ff;
+        text-shadow: 0 0 18px #59d6ff88; }
+      .cine-title span { color: #59d6ff; }
+      .cine-sub { margin-top: 8px; font: 12px ui-monospace, monospace; letter-spacing: 2px; color: #8bb6c8; text-transform: uppercase; }
+      .cine-back { position: absolute; z-index: 3; top: 30px; right: 34px; color: #8bb6c8; text-decoration: none;
+        font: 12px ui-monospace, monospace; letter-spacing: 1px; border: 1px solid #1f3340; border-radius: 999px; padding: 8px 16px; background: #08111788; }
+      .cine-back:hover { color: #59d6ff; border-color: #59d6ff; }
     </style>
   </head>
   <body>
+    <div id="ops-ui">
     <div id="hud" class="panel">Seattle drivers: <b id="count">0</b><br /><span id="near" style="color:#a6adc8">click the map to find nearby drivers</span></div>
     <div id="rightcol">
       <div id="stats" class="panel">
@@ -72,6 +89,8 @@
       <span><i style="background:#b4befe"></i>aircraft</span>
     </div>
     <div id="tooltip"></div>
+    </div>
+    <a id="viewnav" href="#/cinematic">✦ cinematic</a>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
