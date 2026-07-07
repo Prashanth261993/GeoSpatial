@@ -51,6 +51,14 @@
       .cine-back { position: absolute; z-index: 3; top: 30px; right: 34px; color: #8bb6c8; text-decoration: none;
         font: 12px ui-monospace, monospace; letter-spacing: 1px; border: 1px solid #1f3340; border-radius: 999px; padding: 8px 16px; background: #08111788; }
       .cine-back:hover { color: #59d6ff; border-color: #59d6ff; }
+      .cine-ctrl { position: absolute; z-index: 3; bottom: 26px; left: 50%; transform: translateX(-50%);
+        display: flex; gap: 10px; opacity: 0.5; transition: opacity .3s; }
+      .cine-ctrl:hover { opacity: 1; }
+      .cine-ctrl button { font: 12px ui-monospace, monospace; letter-spacing: 1px; color: #8bb6c8;
+        background: #08111788; border: 1px solid #1f3340; border-radius: 999px; padding: 8px 16px; cursor: pointer; transition: .2s; }
+      .cine-ctrl button:hover { border-color: #59d6ff88; color: #cdeeff; }
+      .cine-ctrl button.on { color: #06080d; background: linear-gradient(100deg, #59d6ff, #b4befe);
+        border-color: transparent; font-weight: 700; box-shadow: 0 0 16px #59d6ff66; }
     </style>
   </head>
   <body>

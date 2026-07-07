@@ -33,12 +33,14 @@ new TripsLayer({ getPath, getTimestamps, currentTime: now, trailLength: 9, fadeT
 
     <figure class="figure reveal">
       <img src={`${base}/img/phase7/cinematic.gif`} alt="Cinematic 3D view: glowing driver trails, breathing magenta surge columns, match ripples, auto-orbiting camera over dark Seattle" loading="lazy" />
-      <figcaption>Live drivers leave glowing comet-trails through downtown; surge zones rise as breathing neon columns; each match sends an expanding ripple — all under a slowly orbiting, tilted camera. Same WebSocket feed as the ops map, rendered as data-art.</figcaption>
+      <figcaption>Heading-oriented glyphs — cyan when idle, magenta the instant they're matched — leave glowing comet-trails through downtown; surge zones rise as breathing neon columns; each match sends an expanding ripple — all under a slowly orbiting, tilted camera. Same WebSocket feed as the ops map, rendered as data-art.</figcaption>
     </figure>
 
     <div class="prose reveal">
       <div class="h3">What makes it cinematic</div>
       <p>Four ingredients, in order of impact: <b>motion trails</b> (a dot with a fading tail reads as alive, not just present), <b>glow</b> (bright marks bleeding light on a dark field feel like energy), <b>depth and camera</b> (a tilted, orbiting 3D view turns a flat map into a cityscape), and <b>custom shaders</b> for what libraries can't express. The strategy: get 80% of the wow from GPU-native libraries, and the last 20% from a little hand-written GLSL.</p>
+
+      <p>Two small touches make it read as a system, not a particle demo: entities are drawn as <b>heading-oriented glyphs</b> (a chevron for cars, a delta for aircraft) built from tiny SVG masks and rotated to their direction of travel, so you read intent at a glance; and the moment a driver is assigned a trip, its glyph, trail, and glow flip from cyan to <b>magenta</b> — the match becomes visible in the visualization itself, not just a counter.</p>
 
       <div class="h3">Sparse server, smart client — again</div>
       <p>Motion trails need <em>paths with timestamps</em>, but the server streams <em>point updates</em>. So the client keeps a rolling buffer of each entity's recent positions (trimmed to the last ~9 seconds) and feeds deck.gl's GPU <code>TripsLayer</code> a <code>currentTime</code> that fades each segment by its age. The server streams truth cheaply; the client synthesizes the rich visual — the same principle behind the smooth interpolation from Phase 1.</p>
