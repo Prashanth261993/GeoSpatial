@@ -25,6 +25,18 @@ const PINK: [number, number, number] = [245, 150, 220];
 
 type Trail = { path: [number, number][]; ts: number[]; type: string; hdg: number };
 type Ripple = { lng: number; lat: number; t0: number };
+// Aircraft use a lerp model (sparse 12s polls) + their own interpolated trail
+// buffer, so they glide + leave clean trails like cars instead of teleporting.
+type Air = {
+  fromLng: number; fromLat: number; toLng: number; toLat: number;
+  t0: number; t1: number; seen: number; hdg: number;
+  callsign: string; country: string; altM: number; velMps: number; vRateMps: number;
+  path: [number, number][]; ts: number[];
+};
+type Head = {
+  id: string; position: [number, number]; type: string; hdg: number; onTrip: boolean;
+  callsign?: string; country?: string; altM?: number; velMps?: number; vRateMps?: number;
+};
 
 export function Cinematic() {
   const ref = useRef<HTMLDivElement>(null);
@@ -32,6 +44,7 @@ export function Cinematic() {
   const [show, setShow] = useState({ air: false, surge: true, glyphs: true });
   const showRef = useRef(show);
   showRef.current = show;
+  const clearAir = useRef<() => void>(() => {});
 
   useEffect(() => {
     document.body.classList.add("cinematic");
@@ -54,9 +67,28 @@ export function Cinematic() {
     });
 
     const trails = new Map<string, Trail>();
+    const aircraft = new Map<string, Air>();
+    clearAir.current = () => aircraft.clear();
     const ripples: Ripple[] = [];
     const onTrip = new Map<string, number>(); // driverId -> assigned clock time
     let surge: { cell: string; surge: number }[] = [];
+    const hovering = { on: false }; // pause auto-orbit while inspecting an aircraft
+
+    // Tooltip + hover set once; deck.setProps merges, so they persist across frames.
+    deck.setProps({
+      onHover: (info: any) => { hovering.on = !!(info?.object && info.object.type === "aircraft"); },
+      getTooltip: (info: any) => {
+        const o = info?.object;
+        if (!o || o.type !== "aircraft") return null;
+        const alt = o.altM ? `${Math.round(o.altM * 3.281).toLocaleString()} ft` : "—";
+        const spd = o.velMps ? `${Math.round(o.velMps * 1.944)} kts` : "—";
+        const vr = o.vRateMps ? (o.vRateMps > 0 ? `▲ ${Math.round(o.vRateMps * 196.85)} ft/min` : `▼ ${Math.round(-o.vRateMps * 196.85)} ft/min`) : "level";
+        return {
+          html: `<div style="font:12px ui-monospace,monospace"><b style="color:#89dceb">${o.callsign || o.id}</b><br/>${o.country || ""}<br/>alt ${alt} · ${spd}<br/>${vr} · hdg ${Math.round(o.hdg)}°</div>`,
+          style: { background: "#0b0e14f2", border: "1px solid #2a3346", borderRadius: "8px", color: "#cdd6f4", padding: "8px 10px" },
+        };
+      },
+    });
 
     const bearing = (a: [number, number], b: [number, number]) => {
       // screen-space heading for a north-up glyph: 0=up, clockwise
@@ -82,6 +114,18 @@ export function Cinematic() {
         else if (m.event === "completed") onTrip.delete(m.driver);
         return;
       }
+      if ((m.type || "driver") === "aircraft") {
+        const now = clock();
+        const prev = aircraft.get(m.id);
+        aircraft.set(m.id, {
+          fromLng: prev?.toLng ?? m.lng, fromLat: prev?.toLat ?? m.lat,
+          toLng: m.lng, toLat: m.lat, t0: now, t1: now + 12, seen: now,
+          hdg: m.hdg ?? prev?.hdg ?? 0,
+          callsign: m.callsign || "", country: m.country || "", altM: m.altM || 0, velMps: m.velMps || 0, vRateMps: m.vRateMps || 0,
+          path: prev?.path ?? [], ts: prev?.ts ?? [],
+        });
+        return;
+      }
       push(m.id, m.lng, m.lat, m.type || "driver", m.hdg);
     };
 
@@ -93,23 +137,43 @@ export function Cinematic() {
     const tick = () => {
       const now = clock();
       const s = showRef.current;
-      view.bearing = (view.bearing + 0.06) % 360;
+      if (!hovering.on) view.bearing = (view.bearing + 0.06) % 360; // pause orbit while inspecting
       map.jumpTo({ center: [view.longitude, view.latitude], zoom: view.zoom, bearing: view.bearing, pitch: view.pitch });
 
       for (const [id, tr] of trails) { if (now - tr.ts[tr.ts.length - 1] > 8) trails.delete(id); }
       // expire stale on-trip flags (safety)
       for (const [id, t] of onTrip) { if (now - t > 20) onTrip.delete(id); }
 
+      // Advance aircraft: interpolate along the last polled vector and grow a
+      // smooth trail (capped ~10Hz). Expire only after 30s — well past the 12s
+      // OpenSky poll — so they persist between bursts instead of flickering.
+      for (const [id, a] of aircraft) {
+        if (now - a.seen > 30) { aircraft.delete(id); continue; }
+        const span = a.t1 - a.t0;
+        const f = span > 0 ? Math.min(1, (now - a.t0) / span) : 1;
+        const lng = a.fromLng + (a.toLng - a.fromLng) * f;
+        const lat = a.fromLat + (a.toLat - a.fromLat) * f;
+        const lastTs = a.ts[a.ts.length - 1] ?? -1;
+        if (now - lastTs >= 0.1) { a.path.push([lng, lat]); a.ts.push(now); }
+        while (a.ts.length > 2 && now - a.ts[0] > TRAIL_SEC) { a.path.shift(); a.ts.shift(); }
+      }
+
       const driverTrails: Trail[] = [], tripTrails: Trail[] = [], aircraftTrails: Trail[] = [];
-      const heads: { id: string; position: [number, number]; type: string; hdg: number; onTrip: boolean }[] = [];
+      const heads: Head[] = [];
       for (const [id, tr] of trails) {
         const isTrip = onTrip.has(id);
-        if (tr.type === "aircraft") aircraftTrails.push(tr);
-        else (isTrip ? tripTrails : driverTrails).push(tr);
+        (isTrip ? tripTrails : driverTrails).push(tr);
         const last = tr.path[tr.path.length - 1];
-        if (last) heads.push({ id, position: last, type: tr.type, hdg: tr.hdg, onTrip: isTrip });
+        if (last) heads.push({ id, position: last, type: "driver", hdg: tr.hdg, onTrip: isTrip });
       }
-      setStats({ drivers: driverTrails.length + tripTrails.length, aircraft: aircraftTrails.length, onTrip: tripTrails.length });
+      if (s.air) {
+        for (const [id, a] of aircraft) {
+          aircraftTrails.push({ path: a.path, ts: a.ts, type: "aircraft", hdg: a.hdg });
+          const last = a.path[a.path.length - 1];
+          if (last) heads.push({ id, position: last, type: "aircraft", hdg: a.hdg, onTrip: false, callsign: a.callsign, country: a.country, altM: a.altM, velMps: a.velMps, vRateMps: a.vRateMps });
+        }
+      }
+      setStats({ drivers: driverTrails.length + tripTrails.length, aircraft: s.air ? aircraft.size : 0, onTrip: tripTrails.length });
 
       for (let i = ripples.length - 1; i >= 0; i--) if (now - ripples[i].t0 > 2.5) ripples.splice(i, 1);
 
@@ -145,6 +209,7 @@ export function Cinematic() {
         id: "glow", data: glowHeads, getPosition: (d: any) => d.position,
         getRadius: (d: any) => (d.type === "aircraft" ? 700 : d.onTrip ? 460 : 360) * pulse, radiusUnits: "meters", radiusMinPixels: 6,
         getFillColor: (d: any) => [...headColor(d), 70] as any,
+        pickable: true, // aircraft hover → tooltip (drivers return null)
         extensions: [new PulseGlow()], updateTriggers: { getRadius: now, getFillColor: [...onTrip.keys()].join() },
       }));
 
@@ -155,7 +220,7 @@ export function Cinematic() {
           getIcon: (d: any) => (d.type === "aircraft" ? GLYPH.plane : GLYPH.car),
           getPosition: (d: any) => d.position, getAngle: (d: any) => -d.hdg,
           getSize: (d: any) => (d.type === "aircraft" ? 26 : d.onTrip ? 24 : 18), sizeUnits: "pixels",
-          getColor: (d: any) => headColor(d) as any,
+          getColor: (d: any) => headColor(d) as any, pickable: true,
           updateTriggers: { getAngle: now, getColor: [...onTrip.keys()].join(), getSize: [...onTrip.keys()].join() },
         }));
       }
@@ -184,6 +249,7 @@ export function Cinematic() {
   const toggleAir = async () => {
     const next = !show.air;
     setShow((p) => ({ ...p, air: next }));
+    if (!next) clearAir.current(); // drop stale positions so re-enabling starts clean
     try { await fetch(FEEDS, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ feed: "opensky", enabled: next }) }); } catch {}
   };
 
